@@ -306,3 +306,73 @@ def radial_distribution(
     )
     return histogram
 
+
+def cutout_selection(
+        position_binned,
+        mags_cutout,
+        logmhs_cutout,
+        coords_cutouts_x,
+        coords_cutouts_y,
+        coords_cutouts_z,
+        num_neighbors=2,
+):
+    """
+    Function selects cutouts based on a certain criterion.
+    So far the only criterion is number of neighbors, but that can easily be changed.
+    """
+    mask = np.cumsum(position_binned, axis=1)[:, -1] >= num_neighbors
+    mags_chosen = [magi for i,magi in enumerate(mags_cutout) if mask[i]]
+    logmhs_chosen = [mhi for i, mhi in enumerate(logmhs_cutout) if mask[i]]
+    coords_chosen_x = [coordxi for i, coordxi in enumerate(coords_cutouts_x) if mask[i]]
+    coords_chosen_y = [coordyi for i, coordyi in enumerate(coords_cutouts_y) if mask[i]]
+    coords_chosen_z = [coordzi for i, coordzi in enumerate(coords_cutouts_z) if mask[i]]
+
+    return coords_chosen_x, coords_chosen_y, coords_chosen_z, mags_chosen, logmhs_chosen
+
+
+def triangle_area(a, b, c):
+    """
+    Compute area of triangle given by 3 points in 3D.
+
+    Parameters:
+        a, b, c: array-like, shape (3,)
+
+    Returns:
+        float: area of the triangle
+    """
+    a = np.array(a)
+    b = np.array(b)
+    c = np.array(c)
+
+    # Compute edge vectors
+    ab = b - a
+    ac = c - a
+
+    # Cross product magnitude = 2 * area of triangle
+    cross_prod = np.cross(ab, ac)
+    return 0.5 * np.linalg.norm(cross_prod)
+
+
+def process_cutouts(
+        coords_cutouts_x,
+        coords_cutouts_y,
+        coords_cutouts_z,
+        logmhs_cutout,
+        mags_cutout,
+):
+    n = len(mags_cutout)
+    d1s = np.zeros(n)
+    d2s = np.zeros(n)
+    d3s = np.zeros(n)
+    d14s = np.zeros(n)
+    tot_lengths = np.zeros(n)
+    areas = np.zeros(n)
+    max_out_of_3s = np.zeros(n)
+    dict_stoch = {}
+    mhs_brightest_stochier = []
+    mag_brightest_stochier_arr = []
+
+    for index, (mhiii, magi, cx, cy, cz) in enumerate(
+            zip(logmhs_cutout, mags_cutout, coords_cutouts_x, coords_cutouts_y,
+                coords_cutouts_z)
+    ):
