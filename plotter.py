@@ -200,3 +200,19 @@ def UV_properties_brightest():
     axs.text(x0 - 1.5 * dx, 0.81, 'decreasing rank', transform=axs.transAxes, fontsize=10)
 
     plt.savefig('/groups/astro/ivannik/projects/Neighbors/UV_properties_brightest.pdf', bbox_inches='tight')
+
+
+def attempt_at_plotting_density():
+    fig, ax = plt.subplots(figsize=(8, 8))
+    mappable = plt.imshow(
+        np.mean(density[
+                    int(min(coordsx_fiducial_chosen[220]) * 0.5): int(max(coordsx_fiducial_chosen[220]) * 0.5),
+                    int(min(coordsy_fiducial_chosen[220]) * 0.5): int(max(coordsy_fiducial_chosen[220]) * 0.5),
+                    int(min(coordsz_fiducial_chosen[220]) * 0.5): int(max(coordsz_fiducial_chosen[220]) * 0.5),
+                ], axis=2).T,
+        extent=(2.0 * int(min(coordsx_fiducial_chosen[220]) * 0.5), 2.0 * int(max(coordsx_fiducial_chosen[220]) * 0.5),
+                2.0 * int(max(coordsy_fiducial_chosen[220]) * 0.5), 2.0 * int(min(coordsy_fiducial_chosen[220]) * 0.5)),
+    )
+    plt.colorbar()
+
+    plt.scatter(coordsx_fiducial_chosen[220], coordsy_fiducial_chosen[220])  # , coordsz_fiducial_chosen[50]
