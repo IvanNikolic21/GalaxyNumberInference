@@ -1,0 +1,16 @@
+name: galaxy-neighbors
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - matplotlib
+  - h5py
+  - astropy
+  - jupyterlab          # optional: for running the demo notebook interactively
+  - ipykernel           # registers the env as a Jupyter kernel
+  - pip
+  - pip:
+      - 21cmFAST        # if needed for any upstream steps

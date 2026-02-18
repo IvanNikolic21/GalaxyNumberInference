@@ -411,3 +411,46 @@ def halo_mass_rank(mhs_brightest_fiducial, mhs_brightest_stochier):
     axs.text(x0 - 1.5 * dx, 0.81, 'decreasing rank', transform=axs.transAxes, fontsize=10)
 
     plt.savefig('/groups/astro/ivannik/projects/Neighbors/halomass_properties_brightest.pdf', bbox_inches='tight')
+
+
+def intro_plot():
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    ax1.plot(bin_centers, np.log10(LF), '-', label='intrinsically bright', color='#a63603', lw=2, alpha=0.7)
+    ax1.plot(bin_centers, np.log10(LF_stochier), '-', label='Stochastic model', color='#08519c', lw=2, alpha=0.7)
+    ax1.set_xlim(-23, -17)
+    # plt.ylim(1e-7, 1e-2)
+
+    ax1.set_xlabel(r'$M_{\mathrm{UV}}$')
+    ax1.set_ylabel(r'$\log_{10}(\phi\,[\mathrm{Mpc}^{-3}\,\mathrm{mag}^{-1}])$')
+    ax1.legend()
+    ax1.set_ylim(-7, -2)
+    #####
+    data = np.vstack((logmhs[:40000], first_five_fiduc[0][:40000])).T
+    kdi = gaussian_kde(data.T)
+    x = np.linspace(data[:, 0].min(), data[:, 0].max(), 100)
+    y = np.linspace(data[:, 1].min(), data[:, 1].max(), 100)
+    xx, yy = np.meshgrid(x, y)
+    xy = np.vstack((xx.flatten(), yy.flatten()))
+    z = kdi.evaluate(xy).reshape(xx.shape)
+
+    ax2.contour(x, y, z, levels=np.array([0.005, 0.1, 1, 2, 3, 4, 5, 10]), colors='#a63603', linewidths=2)
+
+    data = np.vstack((logmhs[:40000], first_five_stoch[0][:40000])).T
+    kdi = gaussian_kde(data.T)
+    x = np.linspace(data[:, 0].min(), data[:, 0].max(), 100)
+    y = np.linspace(data[:, 1].min(), data[:, 1].max(), 100)
+    xx, yy = np.meshgrid(x, y)
+    xy = np.vstack((xx.flatten(), yy.flatten()))
+    z = kdi.evaluate(xy).reshape(xx.shape)
+
+    ax2.contour(x, y, z, levels=np.array([0.005, 0.1, 1, 2, 3, 4, 5, 10]), colors='#08519c', linewidths=2)
+
+    ax2.scatter(logmhs[:1000000], first_five_fiduc[0][:1000000], alpha=0.01, color='#a63603')
+
+    ax2.scatter(logmhs[:1000000], first_five_stoch[0][:1000000], alpha=0.01, color='#08519c')
+    ax2.set_ylim(-22, -16)
+
+    ax2.set_ylabel(r'$M_{\mathrm{UV}}$')
+    ax2.set_xlabel(r'$\log{(M_{\mathrm{h}} / M_\odot)}$')
+
+    plt.savefig('/groups/astro/ivannik/projects/Neighbors/UVLFS_empirical_512sim.pdf', bbox_inches='tight')
