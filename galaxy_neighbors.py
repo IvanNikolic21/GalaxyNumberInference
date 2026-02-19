@@ -6,19 +6,22 @@ in 21cmFAST halo catalogs, for both fiducial and stochastic models.
 
 Usage
 -----
-    from galaxy_neighbors import AnalysisConfig, GalaxyModel, run_neighbor_analysis
+    from galaxy_neighbors import RedshiftConfig, AnalysisConfig, GalaxyModel, run_neighbor_analysis
+
+    Z10 = RedshiftConfig(
+        redshift=10.5,
+        halo_catalog_path=Path('/lustre/.../10.5000/HaloCatalog.h5'),
+        muv_fiducial_path=Path('/lustre/.../catalog_fiducial_bigger_new_save.h5'),
+        muv_stochastic_path=Path('/lustre/.../catalog_stoch_bigger_new3.h5'),
+    )
 
     cfg = AnalysisConfig(
         bright_limits=[-22.0, -21.5, -21.0],
         faint_limits=[-17.5, -17.75, -18.0, -18.25, -18.5, -18.75],
-        redshift=10.145,
+        redshift_cfg=Z10,
     )
 
-    fiducial = GalaxyModel.from_hdf5("catalog_fiducial.h5", cfg)
-    stochastic = GalaxyModel.from_hdf5("catalog_stoch.h5", cfg)
-
-    results_fid = fiducial.run()
-    results_stoc = stochastic.run()
+    results_fid, results_stoc = run_neighbor_analysis(Z10, cfg)
 """
 
 from __future__ import annotations
@@ -35,31 +38,70 @@ from astropy.cosmology import Planck18 as cosmo
 
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Redshift configuration
+# ---------------------------------------------------------------------------
+
+@dataclass
+class RedshiftConfig:
+    """All redshift-specific file paths and the redshift value itself.
+
+    One instance per redshift snapshot. Collect all four in a registry
+    dict in run_analysis.py and select via --redshift on the CLI.
+
+    Parameters
+    ----------
+    redshift : float
+        Redshift of the snapshot (e.g. 8.0, 10.5, 12.0, 14.0).
+    halo_catalog_path : Path
+        Path to the HaloCatalog.h5 file for this snapshot.
+    muv_fiducial_path : Path
+        Path to the fiducial MUV catalog HDF5 file.
+    muv_stochastic_path : Path
+        Path to the stochastic MUV catalog HDF5 file.
+    label : str, optional
+        Short label used in filenames and plot annotations.
+        Defaults to 'z{redshift}'.
+    """
+
+    redshift: float
+    halo_catalog_path: Path
+    muv_fiducial_path: Path
+    muv_stochastic_path: Path
+    label: str = ""
+
+    def __post_init__(self):
+        self.halo_catalog_path   = Path(self.halo_catalog_path)
+        self.muv_fiducial_path   = Path(self.muv_fiducial_path)
+        self.muv_stochastic_path = Path(self.muv_stochastic_path)
+        if not self.label:
+            self.label = f"z{self.redshift}"
+
+    @property
+    def cache_subdir(self) -> str:
+        """Subdirectory name to isolate cache/output for this redshift."""
+        return self.label   # e.g. 'z8.0', 'z10.5', 'z12.0', 'z14.0'
+
+
+# ---------------------------------------------------------------------------
+# Analysis configuration
 # ---------------------------------------------------------------------------
 
 @dataclass
 class AnalysisConfig:
-    """All tunable parameters in one place.
+    """All tunable analysis parameters in one place.
 
     Parameters
     ----------
     bright_limits : list of float
         UV magnitude thresholds that define "bright" galaxies.
         A galaxy is considered bright at threshold M if M_UV < M.
-        Defaults to [-22.0, -21.5, -21.0].
     faint_limits : list of float
         UV magnitude thresholds for the faint neighbor sample.
-        Defaults to [-17.5, -17.75, -18.0, -18.25, -18.5, -18.75].
     preselect_faint_limit : float
         Coarse pre-selection cut applied once before the nested loop.
         Should be >= the brightest (least negative) value in faint_limits.
-    redshift : float
-        Redshift of the simulation snapshot, used to compute comoving
-        angular diameter distances for the search aperture.
     survey_area_arcmin2 : float
-        On-sky survey area in arcmin² used to define the search box
-        side length (Lx, Ly).  Defaults to NIRSpec MSA (12.24 arcmin²).
+        On-sky survey area in arcmin^2. Defaults to NIRSpec MSA (12.24).
     """
 
     bright_limits: List[float] = field(
@@ -69,22 +111,23 @@ class AnalysisConfig:
         default_factory=lambda: [-17.5, -17.75, -18.0, -18.25, -18.5, -18.75]
     )
     preselect_faint_limit: float = -17.5
-    redshift: float = 10.145
     survey_area_arcmin2: float = 12.24  # NIRSpec MSA
 
     def __post_init__(self):
-        # Validate that preselect cut is not stricter than the faintest limit
         if self.preselect_faint_limit < min(self.faint_limits):
             warnings.warn(
                 "preselect_faint_limit is more negative than the faintest "
-                "faint_limit — some galaxies may be excluded unexpectedly."
+                "faint_limit -- some galaxies may be excluded unexpectedly."
             )
 
-    @property
-    def search_box_mpc(self) -> float:
-        """Comoving half-side length of the search box in Mpc."""
+    def search_box_mpc(self, redshift: float) -> float:
+        """Comoving half-side length of the search box in Mpc.
+
+        Takes redshift explicitly so the same AnalysisConfig instance can
+        be reused across different RedshiftConfigs without mutation.
+        """
         side = np.sqrt(self.survey_area_arcmin2) * u.arcmin
-        return (side * cosmo.kpc_comoving_per_arcmin(z=self.redshift).to(u.Mpc / u.arcmin)).value
+        return (side * cosmo.kpc_comoving_per_arcmin(z=redshift).to(u.Mpc / u.arcmin)).value
 
     @property
     def bright_names(self) -> List[str]:
@@ -96,13 +139,7 @@ class AnalysisConfig:
 
 
 def _mag_to_key(mag: float) -> str:
-    """Convert a magnitude float to a readable dict key.
-
-    Examples
-    --------
-    -21.5  ->  'M21.5'
-    -18.0  ->  'M18.0'
-    """
+    """Convert a magnitude float to a readable dict key, e.g. -21.5 -> 'M21.5'."""
     return f"M{abs(mag):.2f}".rstrip("0").rstrip(".")
 
 
@@ -112,24 +149,17 @@ def _mag_to_key(mag: float) -> str:
 
 @dataclass
 class NeighborResult:
-    """Neighbor galaxies around a single bright galaxy, at one (bright, faint) limit pair.
+    """Neighbor galaxies around a single bright galaxy.
 
     Attributes
     ----------
     bright_mag : float
-        UV magnitude of the central bright galaxy.
     bright_coord : np.ndarray, shape (3,)
-        (x, y, z) comoving coordinates of the bright galaxy [Mpc].
     faint_mags : np.ndarray
-        UV magnitudes of the faint neighbors.
     faint_coords : np.ndarray, shape (N, 3)
-        Comoving (x, y, z) coordinates of the faint neighbors [Mpc].
     distances : np.ndarray
-        3-D Euclidean distances from bright galaxy to each neighbor [Mpc].
     bright_limit : float
-        The bright magnitude threshold applied.
     faint_limit : float
-        The faint magnitude threshold applied.
     """
 
     bright_mag: float
@@ -154,32 +184,18 @@ class NeighborResult:
 
 
 # ---------------------------------------------------------------------------
-# Halo catalog loader
+# Catalog loaders
 # ---------------------------------------------------------------------------
 
 def load_halo_catalog(halo_catalog_path: str | Path) -> tuple[np.ndarray, np.ndarray]:
-    """Load halo masses and coordinates from an HDF5 halo catalog.
-
-    Parameters
-    ----------
-    halo_catalog_path : str or Path
-
-    Returns
-    -------
-    coords : np.ndarray, shape (N, 3)
-        Comoving coordinates [Mpc] for halos with mass > 0.
-    log_masses : np.ndarray, shape (N,)
-        log10 of the halo masses for halos with mass > 0.
-    """
+    """Load halo coordinates and log-masses from an HDF5 halo catalog."""
     path = Path(halo_catalog_path)
     with h5py.File(path, "r") as f:
         coords_raw = np.array(f["HaloCatalog"]["OutputFields"]["halo_coords"])
         masses_raw = np.array(f["HaloCatalog"]["OutputFields"]["halo_masses"])
 
     mask = masses_raw > 0.0
-    coords = coords_raw[mask]
-    log_masses = np.log10(masses_raw[mask])
-    return coords, log_masses
+    return coords_raw[mask], np.log10(masses_raw[mask])
 
 
 def load_muv_catalog(
@@ -193,19 +209,12 @@ def load_muv_catalog(
 
     Parameters
     ----------
-    muv_catalog_path : str or Path
     index : int or list of int, optional
-        Single realization index, or an explicit list of indices to load
+        Single realization index or an explicit list of indices to load
         and concatenate. Default: 0.
     n_realizations : int, optional
-        If provided, load the first N realizations ([:N]) and concatenate.
+        Load the first N realizations ([:N]) and concatenate.
         Mutually exclusive with `index`.
-
-    Returns
-    -------
-    muvs : np.ndarray, shape (N,)
-        UV magnitudes. If multiple realizations are requested, the arrays
-        are concatenated along axis 0 before returning.
     """
     if index is not None and n_realizations is not None:
         raise ValueError("Provide either `index` or `n_realizations`, not both.")
@@ -232,27 +241,7 @@ def find_neighbors_in_box(
     half_side: float,
     faint_limit: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Find faint galaxies within a cuboid search box around a bright galaxy.
-
-    Parameters
-    ----------
-    bright_coord : array-like, shape (3,)
-        (x, y, z) of the bright galaxy.
-    faint_coords : np.ndarray, shape (M, 3)
-        Coordinates of the faint galaxy pool.
-    faint_mags : np.ndarray, shape (M,)
-        UV magnitudes of the faint galaxy pool.
-    half_side : float
-        Half-side length of the search box (Lx = Ly = Lz = half_side).
-    faint_limit : float
-        Magnitude cut: keep only galaxies with M_UV < faint_limit.
-
-    Returns
-    -------
-    matched_mags : np.ndarray
-    matched_coords : np.ndarray, shape (N, 3)
-    distances : np.ndarray, shape (N,)
-    """
+    """Find faint galaxies within a cuboid search box around a bright galaxy."""
     bx, by, bz = bright_coord
     box_mask = (
         (faint_coords[:, 0] >= bx - half_side) & (faint_coords[:, 0] <= bx + half_side) &
@@ -262,19 +251,18 @@ def find_neighbors_in_box(
     )
 
     matched_coords = faint_coords[box_mask]
-    matched_mags = faint_mags[box_mask]
+    matched_mags   = faint_mags[box_mask]
 
     if len(matched_coords) == 0:
         return matched_mags, matched_coords, np.array([])
 
-    dx = matched_coords - bright_coord  # shape (N, 3)
+    dx = matched_coords - bright_coord
     distances = np.sqrt((dx ** 2).sum(axis=1))
-
     return matched_mags, matched_coords, distances
 
 
 # ---------------------------------------------------------------------------
-# Galaxy model: wraps catalog + config + analysis
+# Galaxy model
 # ---------------------------------------------------------------------------
 
 class GalaxyModel:
@@ -283,78 +271,68 @@ class GalaxyModel:
     Parameters
     ----------
     halo_coords : np.ndarray, shape (N, 3)
-        Comoving coordinates of all halos [Mpc].
     muvs : np.ndarray, shape (N,)
-        UV magnitudes for all halos.
-    config : AnalysisConfig
-    name : str, optional
-        Human-readable label (e.g. 'fiducial', 'stochastic').
+    analysis_cfg : AnalysisConfig
+    redshift_cfg : RedshiftConfig
+    name : str
     """
 
     def __init__(
         self,
         halo_coords: np.ndarray,
         muvs: np.ndarray,
-        config: AnalysisConfig,
+        analysis_cfg: AnalysisConfig,
+        redshift_cfg: RedshiftConfig,
         name: str = "model",
     ):
-        self.config = config
+        self.analysis_cfg = analysis_cfg
+        self.redshift_cfg = redshift_cfg
         self.name = name
 
-        # Pre-select pools once to avoid repeated masking in the inner loop
-        bright_cut = min(config.bright_limits)  # most negative = brightest threshold
-        faint_cut = config.preselect_faint_limit
+        bright_cut = min(analysis_cfg.bright_limits)
+        faint_cut  = analysis_cfg.preselect_faint_limit
 
-        bright_mask = muvs < bright_cut
-        faint_mask = muvs < faint_cut
-
-        self.bright_coords = halo_coords[bright_mask]
-        self.bright_mags = muvs[bright_mask]
-        self.faint_coords = halo_coords[faint_mask]
-        self.faint_mags = muvs[faint_mask]
+        self.bright_coords = halo_coords[muvs < bright_cut]
+        self.bright_mags   = muvs[muvs < bright_cut]
+        self.faint_coords  = halo_coords[muvs < faint_cut]
+        self.faint_mags    = muvs[muvs < faint_cut]
 
     @classmethod
     def from_hdf5(
         cls,
-        halo_catalog_path: str | Path,
         muv_catalog_path: str | Path,
-        config: AnalysisConfig,
+        analysis_cfg: AnalysisConfig,
+        redshift_cfg: RedshiftConfig,
         muv_index: int | list[int] = 0,
         n_realizations: int | None = None,
         name: str = "model",
     ) -> "GalaxyModel":
         """Construct a GalaxyModel directly from HDF5 files.
 
+        Halo catalog path is taken from redshift_cfg automatically.
+
         Parameters
         ----------
         muv_index : int or list of int
-            Single realization index or an explicit list of indices to load
-            and concatenate. Ignored when n_realizations is set.
+            Single realization index or explicit list.
+            Ignored when n_realizations is set.
         n_realizations : int, optional
-            Load the first N realizations ([:N]) and concatenate.
-            Mutually exclusive with muv_index.
+            Load the first N realizations and concatenate.
         """
-        halo_coords, _ = load_halo_catalog(halo_catalog_path)
+        halo_coords, _ = load_halo_catalog(redshift_cfg.halo_catalog_path)
         muvs = load_muv_catalog(
             muv_catalog_path,
             index=muv_index if n_realizations is None else None,
             n_realizations=n_realizations,
         )
-        return cls(halo_coords, muvs, config, name=name)
+        return cls(halo_coords, muvs, analysis_cfg, redshift_cfg, name=name)
 
     def run(self) -> dict[str, dict[str, list[NeighborResult]]]:
-        """Run the full neighbor search over all bright/faint limit combinations.
+        """Run the full neighbor search over all (bright, faint) limit pairs."""
+        cfg      = self.analysis_cfg
+        z_cfg    = self.redshift_cfg
+        half_side = cfg.search_box_mpc(z_cfg.redshift)
 
-        Returns
-        -------
-        results : dict
-            Nested dict: results[bright_key][faint_key] = list of NeighborResult
-            One NeighborResult per bright galaxy that passes the bright_limit cut.
-        """
-        cfg = self.config
-        half_side = cfg.search_box_mpc
-
-        # Initialise result container
         results: dict[str, dict[str, list]] = {
             bname: {fname: [] for fname in cfg.faint_names}
             for bname in cfg.bright_names
@@ -365,7 +343,7 @@ class GalaxyModel:
 
             for bright_limit, bright_key in zip(cfg.bright_limits, cfg.bright_names):
                 if bright_mag >= bright_limit:
-                    continue  # galaxy not bright enough for this threshold
+                    continue
 
                 for faint_limit, faint_key in zip(cfg.faint_limits, cfg.faint_names):
                     matched_mags, matched_coords, distances = find_neighbors_in_box(
@@ -391,9 +369,8 @@ class GalaxyModel:
 
     def __repr__(self):
         return (
-            f"GalaxyModel(name='{self.name}', "
-            f"n_bright={len(self.bright_coords)}, "
-            f"n_faint={len(self.faint_coords)})"
+            f"GalaxyModel(name='{self.name}', z={self.redshift_cfg.redshift}, "
+            f"n_bright={len(self.bright_coords)}, n_faint={len(self.faint_coords)})"
         )
 
 
@@ -402,47 +379,39 @@ class GalaxyModel:
 # ---------------------------------------------------------------------------
 
 def run_neighbor_analysis(
-    fiducial_halo_path: str | Path,
-    fiducial_muv_path: str | Path,
-    stochastic_halo_path: str | Path,
-    stochastic_muv_path: str | Path,
-    config: Optional[AnalysisConfig] = None,
+    redshift_cfg: RedshiftConfig,
+    analysis_cfg: Optional[AnalysisConfig] = None,
     muv_index: int | list[int] = 0,
     n_realizations: int | None = None,
 ) -> tuple[dict, dict]:
-    """Run the full analysis for both fiducial and stochastic models.
+    """Run the full neighbor search for both fiducial and stochastic models.
 
     Parameters
     ----------
-    fiducial_halo_path, fiducial_muv_path : paths
-        HDF5 files for the fiducial model.
-    stochastic_halo_path, stochastic_muv_path : paths
-        HDF5 files for the stochastic model.
-    config : AnalysisConfig, optional
-        If not provided, default config is used.
+    redshift_cfg : RedshiftConfig
+        Snapshot-specific paths and redshift value.
+    analysis_cfg : AnalysisConfig, optional
+        Magnitude grids and survey area. Uses defaults if not provided.
     muv_index : int or list of int
-        Single realization index or explicit list. Ignored if n_realizations set.
+        Single realization index or explicit list.
     n_realizations : int, optional
-        Load the first N realizations and concatenate. Mutually exclusive
-        with muv_index.
+        Load the first N realizations and concatenate.
 
     Returns
     -------
     results_fid, results_stoc : dicts
-        Nested dicts of NeighborResult lists (see GalaxyModel.run).
     """
-    if config is None:
-        config = AnalysisConfig()
+    if analysis_cfg is None:
+        analysis_cfg = AnalysisConfig()
 
-    fiducial = GalaxyModel.from_hdf5(
-        fiducial_halo_path, fiducial_muv_path, config,
-        muv_index=muv_index, n_realizations=n_realizations, name="fiducial",
-    )
-    stochastic = GalaxyModel.from_hdf5(
-        stochastic_halo_path, stochastic_muv_path, config,
-        muv_index=muv_index, n_realizations=n_realizations, name="stochastic",
+    kwargs = dict(
+        analysis_cfg=analysis_cfg,
+        redshift_cfg=redshift_cfg,
+        muv_index=muv_index,
+        n_realizations=n_realizations,
     )
 
-    results_fid = fiducial.run()
-    results_stoc = stochastic.run()
-    return results_fid, results_stoc
+    fiducial   = GalaxyModel.from_hdf5(redshift_cfg.muv_fiducial_path,   name="fiducial",   **kwargs)
+    stochastic = GalaxyModel.from_hdf5(redshift_cfg.muv_stochastic_path, name="stochastic", **kwargs)
+
+    return fiducial.run(), stochastic.run()

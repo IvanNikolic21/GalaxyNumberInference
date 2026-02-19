@@ -1,32 +1,12 @@
-#!/bin/bash
-#SBATCH --job-name=galaxy-d1s
-#SBATCH --output=logs/%x_%j.out      # stdout  → logs/galaxy-d1s_<jobid>.out
-#SBATCH --error=logs/%x_%j.err       # stderr  → logs/galaxy-d1s_<jobid>.err
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8            # adjust to your node; used by numpy/scipy
-#SBATCH --mem=32G                    # adjust based on your catalog sizes
-#SBATCH --time=10:00:00              # hh:mm:ss — be generous the first time
-#SBATCH --partition=astro2_short            # replace with your cluster's partition name
-##SBATCH --account=your_account      # uncomment if your cluster requires this
-
 # ---------------------------------------------------------------------------
-# Environment
-# ---------------------------------------------------------------------------
-# Make conda available (adjust path if your conda lives elsewhere)
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate galaxy-neighbors
 
-# Tell numpy/scipy/h5py how many threads they're allowed to use.
-# Without this they often spin up too many threads and fight each other.
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export OPENBLAS_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export NUMEXPR_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-# ---------------------------------------------------------------------------
-# Housekeeping
-# ---------------------------------------------------------------------------
 mkdir -p logs
 
 echo "======================================================"
@@ -37,23 +17,31 @@ echo "Started:  $(date)"
 echo "======================================================"
 
 # ---------------------------------------------------------------------------
-# Run
+# Run  —  pick one redshift per submission
 # ---------------------------------------------------------------------------
+# Default realization counts reflect catalog sizes:
+#   z=8.0  ->  1 realization
+#   z=10.5 ->  1 realization
+#   z=12.0 -> 50 realizations
+#   z=14.0 -> 200 realizations
 
-# First run: compute everything and cache
-python run_analysis.py --muv-realizations 50 --force-recompute
+# z=10.5 (default for testing)
+python run_analysis.py --redshift 10.5 --muv-realizations 50
 
-# First 10 realizations concatenated
-# python run_analysis.py --muv-realizations 10
+# z=8
+# python run_analysis.py --redshift 8.0 --muv-index 0
 
-# Explicit list of realization indices
-# python run_analysis.py --muv-index 0 1 2 3 4
+# z=12
+# python run_analysis.py --redshift 12.0 --muv-realizations 50
 
-# Force recompute (e.g. after changing magnitude limits)
-# python run_analysis.py --muv-realizations 10 --force-recompute
+# z=14
+# python run_analysis.py --redshift 14.0 --muv-realizations 200
 
-# Build cache only, no plots
-# python run_analysis.py --muv-realizations 10 --no-plots
+# Force recompute after changing magnitude grids:
+# python run_analysis.py --redshift 10.5 --muv-index 0 --force-recompute
+
+# Build cache only, no plots:
+# python run_analysis.py --redshift 14.0 --muv-realizations 200 --no-plots
 
 echo "======================================================"
 echo "Finished: $(date)"
