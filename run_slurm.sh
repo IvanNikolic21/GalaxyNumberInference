@@ -1,4 +1,15 @@
-# ---------------------------------------------------------------------------
+#!/bin/bash
+#SBATCH --job-name=galaxy-d1s
+#SBATCH --output=logs/%x_%j.out      # stdout  → logs/galaxy-d1s_<jobid>.out
+#SBATCH --error=logs/%x_%j.err       # stderr  → logs/galaxy-d1s_<jobid>.err
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8            # adjust to your node; used by numpy/scipy
+#SBATCH --mem=32G                    # adjust based on your catalog sizes
+#SBATCH --time=10:00:00              # hh:mm:ss — be generous the first time
+#SBATCH --partition=astro2_short            # replace with your cluster's partition name
+##SBATCH --account=your_account      # uncomment if your cluster requires this
+
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 conda activate galaxy-neighbors
 
