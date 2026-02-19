@@ -26,16 +26,16 @@ echo "======================================================"
 #   z=14.0 -> 200 realizations
 
 # z=10.5 (default for testing)
-python run_analysis.py --redshift 10.5 --muv-realizations 50
+python run_analysis.py --redshift 10.5 --muv-realizations 20 --force-recompute
 
 # z=8
-# python run_analysis.py --redshift 8.0 --muv-index 0
+ python run_analysis.py --redshift 8.0 --muv-realizations 5 --force-recompute
 
 # z=12
-# python run_analysis.py --redshift 12.0 --muv-realizations 50
+ python run_analysis.py --redshift 12.0 --muv-realizations 50 --force-recompute
 
 # z=14
-# python run_analysis.py --redshift 14.0 --muv-realizations 200
+ python run_analysis.py --redshift 14.0 --muv-realizations 200 --force-recompute
 
 # Force recompute after changing magnitude grids:
 # python run_analysis.py --redshift 10.5 --muv-index 0 --force-recompute
