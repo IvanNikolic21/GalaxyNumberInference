@@ -289,7 +289,7 @@ class GalaxyModel:
         self.redshift_cfg = redshift_cfg
         self.name = name
 
-        bright_cut = min(analysis_cfg.bright_limits)
+        bright_cut = max(analysis_cfg.bright_limits)
         faint_cut = analysis_cfg.preselect_faint_limit
 
         # When multiple realizations are concatenated, muvs is N*n_real long
