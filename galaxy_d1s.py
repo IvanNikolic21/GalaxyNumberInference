@@ -204,7 +204,12 @@ def compute_d1s(
 def save_d1s(d1s: dict, path: str | Path) -> None:
     """Save d1s to a compressed numpy archive (.npz).
 
-    The flat key format is  ``bright_key__faint_key``  (double underscore).
+    The flat key format is ``bright_key__faint_key`` (double underscore).
+    The recommended naming convention for the file itself is:
+      - Single realization:      d1s_fiducial_idx3.npz
+      - Explicit list:           d1s_fiducial_idx0-1-2.npz
+      - First N realizations:    d1s_fiducial_real10.npz
+    This is handled automatically by run_analysis.py via make_cache_name().
 
     Parameters
     ----------

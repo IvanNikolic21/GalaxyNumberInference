@@ -74,17 +74,54 @@ PLOT_FILENAMES = {
 }
 
 # ---------------------------------------------------------------------------
+# Cache filename helper
+# ---------------------------------------------------------------------------
+
+def make_cache_name(model: str, muv_index, n_realizations) -> str:
+    """Build a descriptive cache filename encoding the realization selection.
+
+    Examples
+    --------
+    make_cache_name("fiducial", 3,    None) -> "d1s_fiducial_idx3.npz"
+    make_cache_name("fiducial", [0,1,2], None) -> "d1s_fiducial_idx0-1-2.npz"
+    make_cache_name("fiducial", 0,    10  ) -> "d1s_fiducial_real10.npz"
+    """
+    if n_realizations is not None:
+        tag = f"real{n_realizations}"
+    elif isinstance(muv_index, list):
+        tag = "idx" + "-".join(str(i) for i in muv_index)
+    else:
+        tag = f"idx{muv_index}"
+    return f"d1s_{model}_{tag}.npz"
+
+
+# ---------------------------------------------------------------------------
 # CLI flags
 # ---------------------------------------------------------------------------
+
 def parse_args():
     p = argparse.ArgumentParser(description="Galaxy neighbor d1s pipeline")
+
+    # Realization selection — mutually exclusive
+    real_group = p.add_mutually_exclusive_group()
+    real_group.add_argument(
+        "--muv-index", type=int, nargs="+", default=[0], metavar="I",
+        help=(
+            "One or more realization indices to load and concatenate. "
+            "E.g. --muv-index 0  or  --muv-index 0 1 2 3  (default: 0)"
+        ),
+    )
+    real_group.add_argument(
+        "--muv-realizations", type=int, metavar="N",
+        help=(
+            "Load the first N realizations ([:N]) and concatenate. "
+            "Mutually exclusive with --muv-index."
+        ),
+    )
+
     p.add_argument(
         "--force-recompute", action="store_true",
         help="Ignore existing cache files and recompute d1s from scratch.",
-    )
-    p.add_argument(
-        "--muv-index", type=int, default=0,
-        help="Realization index to load from the MUV catalog (default: 0).",
     )
     p.add_argument(
         "--no-plots", action="store_true",
@@ -99,12 +136,22 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # Resolve realization selection into the two kwargs for run_neighbor_analysis
+    if args.muv_realizations is not None:
+        muv_index = 0              # ignored downstream
+        n_realizations = args.muv_realizations
+    else:
+        muv_index = args.muv_index if len(args.muv_index) > 1 else args.muv_index[0]
+        n_realizations = None
+
+
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     cache_fid  = CACHE_DIR / f"d1s_fiducial_idx{args.muv_index}.npz"
     cache_stoc = CACHE_DIR / f"d1s_stochastic_idx{args.muv_index}.npz"
 
+    log.info(f"Cache files: {cache_fid.name}  |  {cache_stoc.name}")
     # ------------------------------------------------------------------
     # Part 1: neighbor search  (skipped if both caches already exist)
     # ------------------------------------------------------------------
@@ -121,6 +168,7 @@ def main():
             stochastic_muv_path  = MUV_STOCH,
             config               = cfg,
             muv_index            = args.muv_index,
+            n_realizations=n_realizations,
         )
         log.info(f"Part 1 done in {time.perf_counter() - t0:.1f}s")
     else:

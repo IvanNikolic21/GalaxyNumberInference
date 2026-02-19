@@ -182,22 +182,42 @@ def load_halo_catalog(halo_catalog_path: str | Path) -> tuple[np.ndarray, np.nda
     return coords, log_masses
 
 
-def load_muv_catalog(muv_catalog_path: str | Path, index: int = 0) -> np.ndarray:
+def load_muv_catalog(
+    muv_catalog_path: str | Path,
+    index: int | list[int] | None = 0,
+    n_realizations: int | None = None,
+) -> np.ndarray:
     """Load UV magnitudes from a model catalog HDF5 file.
+
+    Exactly one of `index` or `n_realizations` should be provided.
 
     Parameters
     ----------
     muv_catalog_path : str or Path
-    index : int
-        Which realization to load (row index in the 'data' dataset).
+    index : int or list of int, optional
+        Single realization index, or an explicit list of indices to load
+        and concatenate. Default: 0.
+    n_realizations : int, optional
+        If provided, load the first N realizations ([:N]) and concatenate.
+        Mutually exclusive with `index`.
 
     Returns
     -------
     muvs : np.ndarray, shape (N,)
+        UV magnitudes. If multiple realizations are requested, the arrays
+        are concatenated along axis 0 before returning.
     """
+    if index is not None and n_realizations is not None:
+        raise ValueError("Provide either `index` or `n_realizations`, not both.")
+
     path = Path(muv_catalog_path)
     with h5py.File(path, "r") as f:
-        muvs = np.array(f["data"][index])
+        if n_realizations is not None:
+            muvs = np.concatenate(f["data"][:n_realizations], axis=0)
+        elif isinstance(index, list):
+            muvs = np.concatenate([f["data"][i] for i in index], axis=0)
+        else:
+            muvs = np.array(f["data"][index])
     return muvs
 
 
@@ -299,12 +319,27 @@ class GalaxyModel:
         halo_catalog_path: str | Path,
         muv_catalog_path: str | Path,
         config: AnalysisConfig,
-        muv_index: int = 0,
+        muv_index: int | list[int] = 0,
+        n_realizations: int | None = None,
         name: str = "model",
     ) -> "GalaxyModel":
-        """Construct a GalaxyModel directly from HDF5 files."""
+        """Construct a GalaxyModel directly from HDF5 files.
+
+        Parameters
+        ----------
+        muv_index : int or list of int
+            Single realization index or an explicit list of indices to load
+            and concatenate. Ignored when n_realizations is set.
+        n_realizations : int, optional
+            Load the first N realizations ([:N]) and concatenate.
+            Mutually exclusive with muv_index.
+        """
         halo_coords, _ = load_halo_catalog(halo_catalog_path)
-        muvs = load_muv_catalog(muv_catalog_path, index=muv_index)
+        muvs = load_muv_catalog(
+            muv_catalog_path,
+            index=muv_index if n_realizations is None else None,
+            n_realizations=n_realizations,
+        )
         return cls(halo_coords, muvs, config, name=name)
 
     def run(self) -> dict[str, dict[str, list[NeighborResult]]]:
@@ -372,7 +407,8 @@ def run_neighbor_analysis(
     stochastic_halo_path: str | Path,
     stochastic_muv_path: str | Path,
     config: Optional[AnalysisConfig] = None,
-    muv_index: int = 0,
+    muv_index: int | list[int] = 0,
+    n_realizations: int | None = None,
 ) -> tuple[dict, dict]:
     """Run the full analysis for both fiducial and stochastic models.
 
@@ -384,8 +420,11 @@ def run_neighbor_analysis(
         HDF5 files for the stochastic model.
     config : AnalysisConfig, optional
         If not provided, default config is used.
-    muv_index : int
-        Which realization index to load from the MUV catalogs.
+    muv_index : int or list of int
+        Single realization index or explicit list. Ignored if n_realizations set.
+    n_realizations : int, optional
+        Load the first N realizations and concatenate. Mutually exclusive
+        with muv_index.
 
     Returns
     -------
@@ -396,10 +435,12 @@ def run_neighbor_analysis(
         config = AnalysisConfig()
 
     fiducial = GalaxyModel.from_hdf5(
-        fiducial_halo_path, fiducial_muv_path, config, muv_index=muv_index, name="fiducial"
+        fiducial_halo_path, fiducial_muv_path, config,
+        muv_index=muv_index, n_realizations=n_realizations, name="fiducial",
     )
     stochastic = GalaxyModel.from_hdf5(
-        stochastic_halo_path, stochastic_muv_path, config, muv_index=muv_index, name="stochastic"
+        stochastic_halo_path, stochastic_muv_path, config,
+        muv_index=muv_index, n_realizations=n_realizations, name="stochastic",
     )
 
     results_fid = fiducial.run()

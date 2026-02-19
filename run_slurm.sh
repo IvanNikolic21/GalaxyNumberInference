@@ -41,13 +41,19 @@ echo "======================================================"
 # ---------------------------------------------------------------------------
 
 # First run: compute everything and cache
-python run_analysis.py --muv-index 0 --force-recompute
+python run_analysis.py --muv-realizations 50 --force-recompute
 
-# Uncomment to force a full recompute (e.g. after changing magnitude limits):
-# python run_analysis.py --muv-index 0 --force-recompute
+# First 10 realizations concatenated
+# python run_analysis.py --muv-realizations 10
 
-# Uncomment to skip plots and just build the cache (fast sanity check):
-# python run_analysis.py --muv-index 0 --no-plots
+# Explicit list of realization indices
+# python run_analysis.py --muv-index 0 1 2 3 4
+
+# Force recompute (e.g. after changing magnitude limits)
+# python run_analysis.py --muv-realizations 10 --force-recompute
+
+# Build cache only, no plots
+# python run_analysis.py --muv-realizations 10 --no-plots
 
 echo "======================================================"
 echo "Finished: $(date)"
