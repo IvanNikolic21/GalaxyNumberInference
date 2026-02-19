@@ -52,9 +52,9 @@ CACHE_DIR     = OUTPUT_DIR / "cache"
 # ---------------------------------------------------------------------------
 cfg = AnalysisConfig(
     bright_limits        = [-22.0, -21.5, -21.0],
-    faint_limits         = [-17.4, -17.6, -17.8, -18.0, -18.2, -18.4, -18.6, -18.8],
-    preselect_faint_limit= -17.4,
-    redshift             = 10.145,
+    faint_limits         = [-17.3, -17.4, -17.5, -17.6, -17.7, -17.8, -17.9, -18.0, -18.1,  -18.2, -18.3, -18.4, -18.5, -18.6, -18.7, -18.8],
+    preselect_faint_limit= -17.3,
+    redshift             = 10.5,
     survey_area_arcmin2  = 12.24,
 )
 

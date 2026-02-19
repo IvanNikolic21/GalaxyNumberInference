@@ -6,8 +6,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8            # adjust to your node; used by numpy/scipy
 #SBATCH --mem=32G                    # adjust based on your catalog sizes
-#SBATCH --time=02:00:00              # hh:mm:ss — be generous the first time
-#SBATCH --partition=astro            # replace with your cluster's partition name
+#SBATCH --time=10:00:00              # hh:mm:ss — be generous the first time
+#SBATCH --partition=astro2_short            # replace with your cluster's partition name
 ##SBATCH --account=your_account      # uncomment if your cluster requires this
 
 # ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ echo "======================================================"
 # ---------------------------------------------------------------------------
 
 # First run: compute everything and cache
-python run_analysis.py --muv-index 0
+python run_analysis.py --muv-index 0 --force-recompute
 
 # Uncomment to force a full recompute (e.g. after changing magnitude limits):
 # python run_analysis.py --muv-index 0 --force-recompute
