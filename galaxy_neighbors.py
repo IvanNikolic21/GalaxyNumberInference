@@ -306,8 +306,9 @@ class GalaxyModel:
 
         self.bright_coords = halo_coords[muvs < bright_cut]
         self.bright_mags = muvs[muvs < bright_cut]
-        self.faint_coords = halo_coords[muvs < faint_cut]
-        self.faint_mags = muvs[muvs < faint_cut]
+        faint_mask = (muvs < faint_cut) & (muvs >= bright_cut)
+        self.faint_coords = halo_coords[faint_mask]
+        self.faint_mags = muvs[faint_mask]
 
     @classmethod
     def from_hdf5(
