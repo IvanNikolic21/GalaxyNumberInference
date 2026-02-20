@@ -217,12 +217,12 @@ def main():
     log.info("Part 2: computing / loading d1s ...")
     t0 = time.perf_counter()
     d1s_fid = load_or_compute_d1s(
-        path=cache_fid, results=results_fid, cfg=analysis_cfg, d1s_cfg=d1s_cfg,
-        force_recompute=args.force_recompute,
+        path=cache_fid, results=results_fid, cfg=analysis_cfg, redshift_cfg=z_cfg,
+        d1s_cfg=d1s_cfg, force_recompute=args.force_recompute,
     )
     d1s_stoc = load_or_compute_d1s(
-        path=cache_stoc, results=results_stoc, cfg=analysis_cfg, d1s_cfg=d1s_cfg,
-        force_recompute=args.force_recompute,
+        path=cache_stoc, results=results_stoc, cfg=analysis_cfg, redshift_cfg=z_cfg,
+        d1s_cfg=d1s_cfg, force_recompute=args.force_recompute,
     )
     log.info(f"Part 2 done in {time.perf_counter() - t0:.1f}s")
 

@@ -152,6 +152,7 @@ def _neighbor_passes_filter(neighbor: NeighborResult, bins: np.ndarray, min_neig
 def compute_d1s(
     results: dict[str, dict[str, list[NeighborResult]]],
     cfg: AnalysisConfig,
+    redshift_cfg,
     d1s_cfg: Optional[D1sConfig] = None,
 ) -> dict[str, dict[str, np.ndarray]]:
     """Compute d1 values for all (bright_limit, faint_limit) combinations.
@@ -175,7 +176,8 @@ def compute_d1s(
     if d1s_cfg is None:
         d1s_cfg = D1sConfig()
 
-    half_side = cfg.search_box_mpc
+    half_side = cfg.search_box_mpc(redshift_cfg.redshift)
+
     bins = np.linspace(0.1, half_side * np.sqrt(2), d1s_cfg.n_bins + 1)
 
     d1s: dict[str, dict[str, np.ndarray]] = {
@@ -227,7 +229,7 @@ def save_d1s(d1s: dict, path: str | Path) -> None:
     print(f"Saved d1s → {path}.npz" if path.suffix != ".npz" else f"Saved d1s → {path}")
 
 
-def load_d1s(path: str | Path, cfg: AnalysisConfig) -> dict[str, dict[str, np.ndarray]]:
+def load_d1s(path: str | Path, cfg: AnalysisConfig)  -> dict[str, dict[str, np.ndarray]]:
     """Load d1s from a .npz cache file.
 
     Parameters
@@ -264,6 +266,7 @@ def load_or_compute_d1s(
     path: str | Path,
     results: Optional[dict],
     cfg: AnalysisConfig,
+    redshift_cfg,
     d1s_cfg: Optional[D1sConfig] = None,
     force_recompute: bool = False,
 ) -> dict[str, dict[str, np.ndarray]]:
@@ -298,7 +301,7 @@ def load_or_compute_d1s(
         )
 
     print("Computing d1s ...")
-    d1s = compute_d1s(results, cfg, d1s_cfg)
+    d1s = compute_d1s(results, cfg, redshift_cfg, d1s_cfg)
     save_d1s(d1s, npz_path)
     return d1s
 
