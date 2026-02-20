@@ -33,12 +33,11 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Paths  —  explicitly set since these predate the z-subfolder structure
 # ---------------------------------------------------------------------------
-CACHE_DIR  = Path("/groups/astro/ivannik/projects/Neighbors/cache")
+CACHE_DIR  = Path("/groups/astro/ivannik/projects/Neighbors/cache/z10.5")
 OUTPUT_DIR = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
 
-CACHE_FID  = CACHE_DIR / "d1s_fiducial_idx0.npz"
-CACHE_STOC = CACHE_DIR / "d1s_stochastic_idx0.npz"
-
+CACHE_FID  = CACHE_DIR / "d1s_fiducial_real5.npz"
+CACHE_STOC = CACHE_DIR / "d1s_stochastic_real5.npz"
 # ---------------------------------------------------------------------------
 # Must match the config used when these files were computed
 # ---------------------------------------------------------------------------
