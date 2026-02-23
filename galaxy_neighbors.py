@@ -291,18 +291,18 @@ class GalaxyModel:
 
         bright_cut = max(analysis_cfg.bright_limits)
         faint_cut = analysis_cfg.preselect_faint_limit
-
-        # When multiple realizations are concatenated, muvs is N*n_real long
-        # but halo_coords is only N long — tile coords to match.
-        n_halos = len(halo_coords)
-        n_muvs = len(muvs)
-        if n_muvs != n_halos:
-            if n_muvs % n_halos != 0:
-                raise ValueError(
-                    f"MUV array length ({n_muvs}) is not a multiple of "
-                    f"halo catalog length ({n_halos}). Check your catalogs."
-                )
-            halo_coords = np.tile(halo_coords, (n_muvs // n_halos, 1))
+        #
+        # # When multiple realizations are concatenated, muvs is N*n_real long
+        # # but halo_coords is only N long — tile coords to match.
+        # n_halos = len(halo_coords)
+        # n_muvs = len(muvs)
+        # if n_muvs != n_halos:
+        #     if n_muvs % n_halos != 0:
+        #         raise ValueError(
+        #             f"MUV array length ({n_muvs}) is not a multiple of "
+        #             f"halo catalog length ({n_halos}). Check your catalogs."
+        #         )
+        #     halo_coords = np.tile(halo_coords, (n_muvs // n_halos, 1))
 
         self.bright_coords = halo_coords[muvs < bright_cut]
         self.bright_mags = muvs[muvs < bright_cut]
@@ -424,7 +424,30 @@ def run_neighbor_analysis(
         n_realizations=n_realizations,
     )
 
-    fiducial   = GalaxyModel.from_hdf5(redshift_cfg.muv_fiducial_path,   name="fiducial",   **kwargs)
-    stochastic = GalaxyModel.from_hdf5(redshift_cfg.muv_stochastic_path, name="stochastic", **kwargs)
+    # fiducial   = GalaxyModel.from_hdf5(redshift_cfg.muv_fiducial_path,   name="fiducial",   **kwargs)
+    # stochastic = GalaxyModel.from_hdf5(redshift_cfg.muv_stochastic_path, name="stochastic", **kwargs)
 
-    return fiducial.run(), stochastic.run()
+    indices = list(range(n_realizations)) if n_realizations else (
+        [muv_index] if isinstance(muv_index, int) else muv_index)
+
+    results_fid = None
+    results_stoc = None
+
+    for idx in indices:
+        kwargs_i = dict(analysis_cfg=analysis_cfg, redshift_cfg=redshift_cfg, muv_index=idx, n_realizations=None)
+        fid_i = GalaxyModel.from_hdf5(redshift_cfg.muv_fiducial_path, name="fiducial", **kwargs_i).run()
+        stoc_i = GalaxyModel.from_hdf5(redshift_cfg.muv_stochastic_path, name="stochastic", **kwargs_i).run()
+
+        if results_fid is None:
+            results_fid = fid_i
+            results_stoc = stoc_i
+        else:
+            # concatenate NeighborResult lists across realizations
+            for bkey in analysis_cfg.bright_names:
+                for fkey in analysis_cfg.faint_names:
+                    results_fid[bkey][fkey] += fid_i[bkey][fkey]
+                    results_stoc[bkey][fkey] += stoc_i[bkey][fkey]
+
+    return results_fid, results_stoc
+
+    # return fiducial.run(), stochastic.run()
