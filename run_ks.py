@@ -33,23 +33,26 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Paths  —  explicitly set since these predate the z-subfolder structure
 # ---------------------------------------------------------------------------
-CACHE_DIR  = Path("/groups/astro/ivannik/projects/Neighbors/cache/z10.5")
+CACHE_DIR  = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 OUTPUT_DIR = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
 
-CACHE_FID  = CACHE_DIR / "d1s_fiducial_real5.npz"
-CACHE_STOC = CACHE_DIR / "d1s_stochastic_real5.npz"
+CACHE_FID  = CACHE_DIR / "d1s_fiducial_idx0.npz"
+CACHE_STOC = CACHE_DIR / "d1s_stochastic_idx0.npz"
+
 # ---------------------------------------------------------------------------
 # Must match the config used when these files were computed
 # ---------------------------------------------------------------------------
 cfg = AnalysisConfig(
-    bright_limits         = [-22.0, -21.5, -21.0],
-    faint_limits         = [-17.3, -17.4, -17.5, -17.6, -17.7, -17.8, -17.9, -18.0, -18.1,  -18.2, -18.3, -18.4, -18.5, -18.6, -18.7, -18.8],
-    preselect_faint_limit = -17.4,
+    bright_limits         = [-20.5, -20.75, -21.0, -21.25, -21.5, -21.75, -22.0],
+    faint_limits          = [-17.0, -17.1, -17.2, -17.3, -17.4, -17.5, -17.6, -17.7,
+                             -17.8, -17.9, -18.0, -18.1, -18.2, -18.3, -18.4, -18.5,
+                             -18.6, -18.7, -18.8, -18.9, -19.0, -19.1, -19.2],
+    preselect_faint_limit = -17.0,
     survey_area_arcmin2   = 12.24,
 )
 
 ks_cfg = KSConfig(
-    n_trials           = 1000,
+    n_trials           = 2000,
     max_sample         = 100,
     significance       = 0.05,
     summary_percentile = 90.0,

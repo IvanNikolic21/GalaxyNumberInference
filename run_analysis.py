@@ -79,13 +79,15 @@ DEFAULT_REALIZATIONS = {
 AVAILABLE_REDSHIFTS = sorted(REDSHIFT_CONFIGS.keys())
 
 # ---------------------------------------------------------------------------
-# Configuration  —  change magnitude grids here, nothing else needs touching
+# Analysis configuration  —  change magnitude grids here
 # ---------------------------------------------------------------------------
 analysis_cfg = AnalysisConfig(
-    bright_limits        = [-22.0, -21.5, -21.0],
-    faint_limits         = [-17.3, -17.4, -17.5, -17.6, -17.7, -17.8, -17.9, -18.0, -18.1,  -18.2, -18.3, -18.4, -18.5, -18.6, -18.7, -18.8],
-    preselect_faint_limit= -17.3,
-    survey_area_arcmin2  = 12.24,
+    bright_limits         = [-20.5, -20.75, -21.0, -21.25, -21.5, -21.75, -22.0],
+    faint_limits          = [-17.0, -17.1, -17.2, -17.3, -17.4, -17.5, -17.6, -17.7,
+                             -17.8, -17.9, -18.0, -18.1, -18.2, -18.3, -18.4, -18.5,
+                             -18.6, -18.7, -18.8, -18.9, -19.0, -19.1, -19.2],
+    preselect_faint_limit = -17.0,
+    survey_area_arcmin2   = 12.24,
 )
 
 d1s_cfg = D1sConfig(
@@ -217,12 +219,12 @@ def main():
     log.info("Part 2: computing / loading d1s ...")
     t0 = time.perf_counter()
     d1s_fid = load_or_compute_d1s(
-        path=cache_fid, results=results_fid, cfg=analysis_cfg, redshift_cfg=z_cfg,
-        d1s_cfg=d1s_cfg, force_recompute=args.force_recompute,
+        path=cache_fid, results=results_fid, cfg=analysis_cfg, d1s_cfg=d1s_cfg,
+        force_recompute=args.force_recompute,
     )
     d1s_stoc = load_or_compute_d1s(
-        path=cache_stoc, results=results_stoc, cfg=analysis_cfg, redshift_cfg=z_cfg,
-        d1s_cfg=d1s_cfg, force_recompute=args.force_recompute,
+        path=cache_stoc, results=results_stoc, cfg=analysis_cfg, d1s_cfg=d1s_cfg,
+        force_recompute=args.force_recompute,
     )
     log.info(f"Part 2 done in {time.perf_counter() - t0:.1f}s")
 

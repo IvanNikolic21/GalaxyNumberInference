@@ -1,48 +1,38 @@
 """
 galaxy_ks.py
 ------------
-KS-test based analysis to find the faint magnitude limit that most
-efficiently distinguishes the fiducial from the stochastic model.
+KS and Anderson-Darling test analysis to find the faint magnitude limit
+that most efficiently distinguishes fiducial from stochastic models.
 
-For a fixed bright_key (and implicitly a fixed redshift, since d1s arrays
-are computed per redshift), we sweep over all faint_keys and ask:
-"How many bright galaxy pointings are needed before the KS test
-consistently rejects the null hypothesis that both models are the same?"
+For a fixed bright_key, sweeps over all faint_keys and estimates via
+bootstrap the minimum number of pointings needed to distinguish the two
+d1 distributions at a given significance level.
 
-The answer is estimated via bootstrap: for each trial we draw i samples
-with replacement from each model's d1s array and compute the KS p-value.
-We find the smallest i at which the p-value drops and stays below the
-significance threshold. Repeating this n_trials times gives a distribution
-of critical sample sizes — the faint limit with the smallest median (and
-tightest spread) is the most observationally efficient.
+Both KS and AD tests are run in parallel:
+- KS is most sensitive to differences near the distribution center
+- AD weights the tails more heavily, catching differences KS may miss
 
 Usage
 -----
-    from galaxy_d1s import load_d1s
-    from galaxy_ks import KSConfig, run_ks_analysis, plot_ks_results, summarise_ks
+    from galaxy_ks import KSConfig, run_ks_analysis, plot_ks_results, \
+                          plot_ks_summary_bars, summarise_ks
 
-    from galaxy_neighbors import AnalysisConfig
-    cfg = AnalysisConfig(...)
-
-    d1s_fid  = load_d1s('cache/z10.5/d1s_fiducial_real10.npz',  cfg)
-    d1s_stoc = load_d1s('cache/z10.5/d1s_stochastic_real10.npz', cfg)
-
-    ks_cfg = KSConfig()
+    ks_cfg  = KSConfig()
     results = run_ks_analysis(d1s_fid, d1s_stoc, cfg, ks_cfg, bright_key='M21.5')
 
-    fig = plot_ks_results(results, ks_cfg)
-    print(summarise_ks(results))
+    print(summarise_ks(results, ks_cfg))
+    fig = plot_ks_results(results, ks_cfg, bright_key='M21.5', redshift_label=10.5)
+    fig = plot_ks_summary_bars(results, ks_cfg, bright_key='M21.5', redshift_label=10.5)
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import kstest
+from scipy.stats import kstest, anderson_ksamp
 
 
 # ---------------------------------------------------------------------------
@@ -51,23 +41,20 @@ from scipy.stats import kstest
 
 @dataclass
 class KSConfig:
-    """Parameters for the KS test analysis.
+    """Parameters for the KS/AD bootstrap analysis.
 
     Parameters
     ----------
     n_trials : int
-        Number of bootstrap trials per faint limit. Default: 1000.
+        Number of bootstrap trials per faint limit. Default: 2000.
     max_sample : int
-        Maximum sample size to test. If the critical size exceeds this,
-        the trial is recorded as None (inconclusive). Default: 100.
+        Maximum sample size to test per trial. Default: 100.
     significance : float
-        P-value threshold below which the KS test is considered to reject
-        the null hypothesis. Default: 0.05.
+        P-value threshold for rejecting the null hypothesis. Default: 0.05.
     summary_percentile : float
-        Upper percentile reported alongside the median as a spread measure.
-        Default: 90.
+        Upper percentile reported alongside median as spread measure. Default: 90.
     """
-    n_trials: int = 1000
+    n_trials: int = 2000
     max_sample: int = 100
     significance: float = 0.05
     summary_percentile: float = 90.0
@@ -80,72 +67,61 @@ class KSConfig:
 def _find_critical_sample(pvalues: np.ndarray, threshold: float) -> int | None:
     """Find the first index where p-value drops and stays below threshold.
 
-    Uses a suffix-maximum approach: the critical index is the first position
-    where all subsequent p-values are also below the threshold.
-
-    Parameters
-    ----------
-    pvalues : np.ndarray
-        Array of p-values indexed by sample size.
-    threshold : float
-
-    Returns
-    -------
-    int or None
-        Critical sample size, or None if never reached.
+    Uses suffix-maximum: critical index is the first position where all
+    subsequent p-values are also below the threshold.
     """
     suffix_max = np.maximum.accumulate(pvalues[::-1])[::-1]
-    # Shift left so the suffix excludes the current element
     suffix_max = np.r_[suffix_max[1:], -np.inf]
     idx = np.where(suffix_max < threshold)[0]
     return int(idx[0]) if len(idx) else None
 
 
-def _ks_trial(
+def _bootstrap_trial(
     arr_fid: np.ndarray,
     arr_stoc: np.ndarray,
     max_sample: int,
     significance: float,
     rng: np.random.Generator,
-) -> int | None:
-    """Run a single bootstrap KS trial.
+) -> tuple[int | None, int | None]:
+    """Run a single bootstrap trial for both KS and AD tests.
 
-    Draws i samples with replacement from each array for i in [3, max_sample],
-    computes the KS p-value at each i, then finds the critical sample size.
-
-    Parameters
-    ----------
-    arr_fid, arr_stoc : np.ndarray
-        Full d1s arrays for fiducial and stochastic models.
-    max_sample : int
-    significance : float
-    rng : np.random.Generator
+    Draws i samples with replacement from each array for i in [3, max_sample].
 
     Returns
     -------
-    int or None
+    critical_ks, critical_ad : int or None
+        Critical sample sizes for KS and AD respectively.
     """
-    pvalues = np.zeros(max_sample)
+    pvalues_ks = np.zeros(max_sample)
+    pvalues_ad = np.zeros(max_sample)
+
     for i in range(3, max_sample):
         sample_fid  = rng.choice(arr_fid,  size=i, replace=True)
         sample_stoc = rng.choice(arr_stoc, size=i, replace=True)
-        pvalues[i]  = kstest(sample_fid, sample_stoc).pvalue
 
-    return _find_critical_sample(pvalues, significance)
+        pvalues_ks[i] = kstest(sample_fid, sample_stoc).pvalue
+
+        # AD p-value is capped at [0.001, 0.25] by scipy
+        try:
+            pvalues_ad[i] = anderson_ksamp([sample_fid, sample_stoc]).pvalue
+        except Exception:
+            pvalues_ad[i] = 1.0
+
+    return (
+        _find_critical_sample(pvalues_ks, significance),
+        _find_critical_sample(pvalues_ad, significance),
+    )
 
 
 def run_ks_analysis(
-    d1s_fid: dict[str, dict[str, np.ndarray]],
-    d1s_stoc: dict[str, dict[str, np.ndarray]],
-    cfg,                        # AnalysisConfig
+    d1s_fid: dict,
+    d1s_stoc: dict,
+    cfg,
     ks_cfg: Optional[KSConfig] = None,
     bright_key: str = None,
     seed: int = 42,
-) -> dict[str, np.ndarray]:
-    """Run the full KS bootstrap analysis for all faint limits.
-
-    For a fixed bright_key, sweeps over all faint_keys and estimates the
-    distribution of critical sample sizes via bootstrap.
+) -> dict[str, dict[str, np.ndarray]]:
+    """Run KS and AD bootstrap analysis for all faint limits.
 
     Parameters
     ----------
@@ -154,15 +130,15 @@ def run_ks_analysis(
     cfg : AnalysisConfig
     ks_cfg : KSConfig, optional
     bright_key : str, optional
-        Which bright threshold to analyse. Defaults to cfg.bright_names[0].
+        Defaults to cfg.bright_names[0].
     seed : int
-        Random seed for reproducibility.
 
     Returns
     -------
     results : dict
-        results[faint_key] = np.ndarray of shape (n_trials,) containing
-        critical sample sizes. None trials are stored as np.nan.
+        results[faint_key]['ks'] = np.ndarray of shape (n_trials,)
+        results[faint_key]['ad'] = np.ndarray of shape (n_trials,)
+        NaN entries indicate inconclusive trials.
     """
     if ks_cfg is None:
         ks_cfg = KSConfig()
@@ -170,31 +146,42 @@ def run_ks_analysis(
         bright_key = cfg.bright_names[0]
 
     rng = np.random.default_rng(seed)
-    results: dict[str, np.ndarray] = {}
+    results: dict[str, dict[str, np.ndarray]] = {}
 
     for fkey in cfg.faint_names:
         arr_fid  = d1s_fid[bright_key][fkey]
         arr_stoc = d1s_stoc[bright_key][fkey]
 
         if len(arr_fid) < ks_cfg.max_sample or len(arr_stoc) < ks_cfg.max_sample:
-            print(
-                f"  Warning: {fkey} has fewer entries than max_sample "
-                f"({len(arr_fid)} fid, {len(arr_stoc)} stoc) — skipping."
-            )
-            results[fkey] = np.full(ks_cfg.n_trials, np.nan)
+            print(f"  Warning: {fkey} has too few entries "
+                  f"({len(arr_fid)} fid, {len(arr_stoc)} stoc) — skipping.")
+            results[fkey] = {
+                'ks': np.full(ks_cfg.n_trials, np.nan),
+                'ad': np.full(ks_cfg.n_trials, np.nan),
+            }
             continue
 
-        critical_sizes = np.full(ks_cfg.n_trials, np.nan)
-        for trial in range(ks_cfg.n_trials):
-            c = _ks_trial(arr_fid, arr_stoc, ks_cfg.max_sample, ks_cfg.significance, rng)
-            if c is not None:
-                critical_sizes[trial] = c
+        critical_ks = np.full(ks_cfg.n_trials, np.nan)
+        critical_ad = np.full(ks_cfg.n_trials, np.nan)
 
-        results[fkey] = critical_sizes
-        print(f"  {bright_key} | {fkey}: "
-              f"median={np.nanmedian(critical_sizes):.1f}  "
-              f"p{ks_cfg.summary_percentile:.0f}={np.nanpercentile(critical_sizes, ks_cfg.summary_percentile):.1f}  "
-              f"inconclusive={np.isnan(critical_sizes).sum()}/{ks_cfg.n_trials}")
+        for trial in range(ks_cfg.n_trials):
+            c_ks, c_ad = _bootstrap_trial(
+                arr_fid, arr_stoc, ks_cfg.max_sample, ks_cfg.significance, rng
+            )
+            if c_ks is not None:
+                critical_ks[trial] = c_ks
+            if c_ad is not None:
+                critical_ad[trial] = c_ad
+
+        results[fkey] = {'ks': critical_ks, 'ad': critical_ad}
+
+        print(f"  {bright_key} | {fkey}:  "
+              f"KS median={np.nanmedian(critical_ks):.1f}  "
+              f"p{ks_cfg.summary_percentile:.0f}={np.nanpercentile(critical_ks, ks_cfg.summary_percentile):.1f}  "
+              f"AD median={np.nanmedian(critical_ad):.1f}  "
+              f"p{ks_cfg.summary_percentile:.0f}={np.nanpercentile(critical_ad, ks_cfg.summary_percentile):.1f}  "
+              f"inconclusive KS={np.isnan(critical_ks).sum()} AD={np.isnan(critical_ad).sum()}"
+              f"/{ks_cfg.n_trials}")
 
     return results
 
@@ -204,35 +191,33 @@ def run_ks_analysis(
 # ---------------------------------------------------------------------------
 
 def summarise_ks(
-    results: dict[str, np.ndarray],
+    results: dict,
     ks_cfg: Optional[KSConfig] = None,
 ) -> str:
-    """Return a formatted summary table of median and spread per faint limit.
+    """Formatted summary table of median and spread for both KS and AD.
 
-    The 'score' column is the 90th percentile — a single number capturing
-    both typical cost (median) and worst-case reliability (upper tail).
-    Lower is better.
+    Ordered by faint_limit as given (no sorting by statistic).
     """
     if ks_cfg is None:
         ks_cfg = KSConfig()
 
     pct = ks_cfg.summary_percentile
     lines = [
-        f"{'faint_key':<12}  {'median':>8}  {'p'+str(int(pct)):>8}  {'inconclusive':>12}",
-        "-" * 48,
+        f"{'faint_key':<12}  {'KS med':>8}  {'KS p'+str(int(pct)):>8}  "
+        f"{'AD med':>8}  {'AD p'+str(int(pct)):>8}  {'n_inconclusive':>14}",
+        "-" * 68,
     ]
-    # Sort by median so the best limit floats to the top
-    sorted_keys = sorted(results, key=lambda k: np.nanmedian(results[k]))
-    for fkey in sorted_keys:
-        arr = results[fkey]
+    for fkey, res in results.items():
+        ks, ad = res['ks'], res['ad']
         lines.append(
             f"{fkey:<12}  "
-            f"{np.nanmedian(arr):>8.1f}  "
-            f"{np.nanpercentile(arr, pct):>8.1f}  "
-            f"{np.isnan(arr).sum():>12d}"
+            f"{np.nanmedian(ks):>8.1f}  "
+            f"{np.nanpercentile(ks, pct):>8.1f}  "
+            f"{np.nanmedian(ad):>8.1f}  "
+            f"{np.nanpercentile(ad, pct):>8.1f}  "
+            f"{np.isnan(ks).sum():>7d} / {np.isnan(ad).sum():<7d}"
         )
-    lines.append("-" * 48)
-    lines.append(f"Best limit (lowest median): {sorted_keys[0]}")
+    lines.append("-" * 68)
     return "\n".join(lines)
 
 
@@ -241,104 +226,90 @@ def summarise_ks(
 # ---------------------------------------------------------------------------
 
 def plot_ks_results(
-    results: dict[str, np.ndarray],
+    results: dict,
     ks_cfg: Optional[KSConfig] = None,
     bright_key: str = "",
     redshift_label: float = None,
-    figsize: tuple = (9, 5),
+    figsize: tuple = (12, 5),
     n_bins: int = 30,
 ) -> plt.Figure:
-    """Plot overlapping histograms of critical sample size distributions.
+    """Side-by-side histogram panels for KS and AD critical sample sizes.
 
-    Parameters
-    ----------
-    results : dict
-        Output of run_ks_analysis().
-    ks_cfg : KSConfig, optional
-    bright_key : str
-        Used in the plot title.
-    redshift_label : float, optional
-        Redshift shown in the title if provided.
-    figsize : tuple
-    n_bins : int
-
-    Returns
-    -------
-    fig : matplotlib.Figure
+    Ordered by faint_limit as given in config — no sorting.
     """
     if ks_cfg is None:
         ks_cfg = KSConfig()
 
-    fig, ax = plt.subplots(figsize=figsize)
+    fig, (ax_ks, ax_ad) = plt.subplots(1, 2, figsize=figsize, sharey=True)
 
-    # Sort by median so legend order matches "best to worst"
-    sorted_keys = sorted(results, key=lambda k: np.nanmedian(results[k]))
+    for fkey, res in results.items():
+        label = fkey.replace("M", "-")
+        for ax, test in [(ax_ks, 'ks'), (ax_ad, 'ad')]:
+            valid = res[test][~np.isnan(res[test])]
+            if len(valid) > 0:
+                ax.hist(valid, bins=n_bins, alpha=0.4, label=label)
 
-    for fkey in sorted_keys:
-        arr = results[fkey]
-        valid = arr[~np.isnan(arr)]
-        median = np.nanmedian(arr)
-        ax.hist(
-            valid, bins=n_bins, alpha=0.5,
-            label=rf"$M_{{UV}}<{fkey.replace('M','-')}$  (med={median:.0f})",
-        )
+    for ax, title in [(ax_ks, 'KS test'), (ax_ad, 'Anderson-Darling')]:
+        ax.set_xlabel("Pointings needed", fontsize=13)
+        ax.set_ylabel("Trial count", fontsize=13)
+        subtitle = title
+        if bright_key or redshift_label is not None:
+            parts = []
+            if bright_key:
+                parts.append(rf"$M_{{UV,0}}<-{bright_key.replace('M','')}$")
+            if redshift_label is not None:
+                parts.append(rf"$z={redshift_label}$")
+            subtitle += "\n" + ",  ".join(parts)
+        ax.set_title(subtitle, fontsize=12)
+        ax.legend(fontsize=8, ncol=2)
 
-    ax.set_xlabel("Number of bright galaxy pointings needed", fontsize=14)
-    ax.set_ylabel("Trial count", fontsize=14)
-
-    title = "KS test: pointings needed to distinguish models at "
-    title += rf"{int((1-ks_cfg.significance)*100)}% confidence"
-    if bright_key or redshift_label is not None:
-        subtitle_parts = []
-        if bright_key:
-            subtitle_parts.append(rf"$M_{{UV,0}}<-{bright_key.replace('M','')}$")
-        if redshift_label is not None:
-            subtitle_parts.append(rf"$z={redshift_label}$")
-        title += "\n" + ",  ".join(subtitle_parts)
-
-    ax.set_title(title, fontsize=13)
-    ax.legend(fontsize=11)
     fig.tight_layout()
     return fig
 
 
 def plot_ks_summary_bars(
-    results: dict[str, np.ndarray],
+    results: dict,
     ks_cfg: Optional[KSConfig] = None,
     bright_key: str = "",
     redshift_label: float = None,
-    figsize: tuple = (9, 5),
+    figsize: tuple = (14, 5),
 ) -> plt.Figure:
-    """Bar chart of median critical sample size with 90th percentile error bars.
+    """Side-by-side bar charts for KS and AD, ordered by faint_limit.
 
-    A compact alternative to the histogram plot — useful when comparing
-    many faint limits at once or across redshifts.
+    Error bars run from median to the summary_percentile.
     """
     if ks_cfg is None:
         ks_cfg = KSConfig()
 
-    sorted_keys = sorted(results, key=lambda k: np.nanmedian(results[k]))
-    medians = [np.nanmedian(results[k]) for k in sorted_keys]
-    p90s    = [np.nanpercentile(results[k], ks_cfg.summary_percentile) for k in sorted_keys]
-    errors  = [p - m for p, m in zip(p90s, medians)]
-    labels  = [k.replace("M", "-") for k in sorted_keys]
+    # Preserve config order — no sorting
+    fkeys  = list(results.keys())
+    labels = [k.replace("M", "-") for k in fkeys]
 
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.bar(labels, medians, yerr=errors, capsize=5, alpha=0.8,
-           color="steelblue", error_kw={"ecolor": "black", "lw": 1.5})
-    ax.set_xlabel(r"Faint limit $M_{\rm UV}$", fontsize=14)
-    ax.set_ylabel("Median pointings needed", fontsize=14)
+    fig, (ax_ks, ax_ad) = plt.subplots(1, 2, figsize=figsize, sharey=True)
 
-    title = rf"KS efficiency by faint limit"
-    if bright_key or redshift_label is not None:
-        parts = []
-        if bright_key:
-            parts.append(rf"$M_{{UV,0}}<-{bright_key.replace('M','')}$")
-        if redshift_label is not None:
-            parts.append(rf"$z={redshift_label}$")
-        title += "\n" + ",  ".join(parts)
+    for ax, test, title in [
+        (ax_ks, 'ks', 'KS test'),
+        (ax_ad, 'ad', 'Anderson-Darling'),
+    ]:
+        medians = [np.nanmedian(results[k][test]) for k in fkeys]
+        p90s    = [np.nanpercentile(results[k][test], ks_cfg.summary_percentile) for k in fkeys]
+        errors  = [p - m for p, m in zip(p90s, medians)]
 
-    ax.set_title(title, fontsize=13)
-    ax.tick_params(axis="x", rotation=30)
+        ax.bar(labels, medians, yerr=errors, capsize=4, alpha=0.8,
+               color="steelblue", error_kw={"ecolor": "black", "lw": 1.5})
+        ax.set_xlabel(r"Faint limit $M_{\rm UV}$", fontsize=13)
+        ax.set_ylabel("Median pointings needed", fontsize=13)
+        ax.tick_params(axis="x", rotation=45)
+
+        subtitle = title
+        if bright_key or redshift_label is not None:
+            parts = []
+            if bright_key:
+                parts.append(rf"$M_{{UV,0}}<-{bright_key.replace('M','')}$")
+            if redshift_label is not None:
+                parts.append(rf"$z={redshift_label}$")
+            subtitle += "\n" + ",  ".join(parts)
+        ax.set_title(subtitle, fontsize=12)
+
     fig.tight_layout()
     return fig

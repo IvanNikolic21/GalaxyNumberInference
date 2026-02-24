@@ -127,7 +127,7 @@ class AnalysisConfig:
         be reused across different RedshiftConfigs without mutation.
         """
         side = np.sqrt(self.survey_area_arcmin2) * u.arcmin
-        return (side * cosmo.kpc_comoving_per_arcmin(z=redshift).to(u.Mpc / u.arcmin)).value
+        return (side * cosmo.kpc_comoving_per_arcmin(redshift).to(u.Mpc / u.arcmin)).value
 
     @property
     def bright_names(self) -> List[str]:
@@ -289,26 +289,25 @@ class GalaxyModel:
         self.redshift_cfg = redshift_cfg
         self.name = name
 
-        bright_cut = max(analysis_cfg.bright_limits)
-        faint_cut = analysis_cfg.preselect_faint_limit
-        #
-        # # When multiple realizations are concatenated, muvs is N*n_real long
-        # # but halo_coords is only N long — tile coords to match.
-        # n_halos = len(halo_coords)
-        # n_muvs = len(muvs)
-        # if n_muvs != n_halos:
-        #     if n_muvs % n_halos != 0:
-        #         raise ValueError(
-        #             f"MUV array length ({n_muvs}) is not a multiple of "
-        #             f"halo catalog length ({n_halos}). Check your catalogs."
-        #         )
-        #     halo_coords = np.tile(halo_coords, (n_muvs // n_halos, 1))
+        bright_cut = min(analysis_cfg.bright_limits)
+        faint_cut  = analysis_cfg.preselect_faint_limit
+
+        # When multiple realizations are concatenated, muvs is N*n_real long
+        # but halo_coords is only N long — tile coords to match.
+        n_halos = len(halo_coords)
+        n_muvs  = len(muvs)
+        if n_muvs != n_halos:
+            if n_muvs % n_halos != 0:
+                raise ValueError(
+                    f"MUV array length ({n_muvs}) is not a multiple of "
+                    f"halo catalog length ({n_halos}). Check your catalogs."
+                )
+            halo_coords = np.tile(halo_coords, (n_muvs // n_halos, 1))
 
         self.bright_coords = halo_coords[muvs < bright_cut]
-        self.bright_mags = muvs[muvs < bright_cut]
-        faint_mask = (muvs < faint_cut) & (muvs >= bright_cut)
-        self.faint_coords = halo_coords[faint_mask]
-        self.faint_mags = muvs[faint_mask]
+        self.bright_mags   = muvs[muvs < bright_cut]
+        self.faint_coords  = halo_coords[muvs < faint_cut]
+        self.faint_mags    = muvs[muvs < faint_cut]
 
     @classmethod
     def from_hdf5(
@@ -424,30 +423,7 @@ def run_neighbor_analysis(
         n_realizations=n_realizations,
     )
 
-    # fiducial   = GalaxyModel.from_hdf5(redshift_cfg.muv_fiducial_path,   name="fiducial",   **kwargs)
-    # stochastic = GalaxyModel.from_hdf5(redshift_cfg.muv_stochastic_path, name="stochastic", **kwargs)
+    fiducial   = GalaxyModel.from_hdf5(redshift_cfg.muv_fiducial_path,   name="fiducial",   **kwargs)
+    stochastic = GalaxyModel.from_hdf5(redshift_cfg.muv_stochastic_path, name="stochastic", **kwargs)
 
-    indices = list(range(n_realizations)) if n_realizations else (
-        [muv_index] if isinstance(muv_index, int) else muv_index)
-
-    results_fid = None
-    results_stoc = None
-
-    for idx in indices:
-        kwargs_i = dict(analysis_cfg=analysis_cfg, redshift_cfg=redshift_cfg, muv_index=idx, n_realizations=None)
-        fid_i = GalaxyModel.from_hdf5(redshift_cfg.muv_fiducial_path, name="fiducial", **kwargs_i).run()
-        stoc_i = GalaxyModel.from_hdf5(redshift_cfg.muv_stochastic_path, name="stochastic", **kwargs_i).run()
-
-        if results_fid is None:
-            results_fid = fid_i
-            results_stoc = stoc_i
-        else:
-            # concatenate NeighborResult lists across realizations
-            for bkey in analysis_cfg.bright_names:
-                for fkey in analysis_cfg.faint_names:
-                    results_fid[bkey][fkey] += fid_i[bkey][fkey]
-                    results_stoc[bkey][fkey] += stoc_i[bkey][fkey]
-
-    return results_fid, results_stoc
-
-    # return fiducial.run(), stochastic.run()
+    return fiducial.run(), stochastic.run()
