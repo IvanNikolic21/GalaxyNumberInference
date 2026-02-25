@@ -1,14 +1,15 @@
 #!/bin/bash
+
 #SBATCH --job-name=galaxy-ks
-#SBATCH --output=logs/%x_%j.out
-#SBATCH --error=logs/%x_%j.err
+#SBATCH --output=logs/%x_%j.out      # stdout  → logs/galaxy-d1s_<jobid>.out
+#SBATCH --error=logs/%x_%j.err       # stderr  → logs/galaxy-d1s_<jobid>.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --time=01:00:00
-#SBATCH --partition=astro
-##SBATCH --account=your_account
+#SBATCH --cpus-per-task=8            # adjust to your node; used by numpy/scipy
+#SBATCH --mem=32G                    # adjust based on your catalog sizes
+#SBATCH --time=10:00:00              # hh:mm:ss — be generous the first time
+#SBATCH --partition=astro2_short            # replace with your cluster's partition name
+##SBATCH --account=your_account      # uncomment if your cluster requires this
 
 # ---------------------------------------------------------------------------
 # Environment
