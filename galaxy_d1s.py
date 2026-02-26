@@ -370,12 +370,18 @@ def plot_d1s_grid(
         arr_stoc = d1s_stoc[bright_key][fkey]
 
         if len(arr_fid) > 1:
-            kde_fid = gaussian_kde(arr_fid, bw_method=d1s_cfg.bw_fid)
-            ax.plot(x, kde_fid(x), color=d1s_cfg.color_fid, lw=3, label=d1s_cfg.label_fid)
+            try:
+                kde_fid = gaussian_kde(arr_fid, bw_method=d1s_cfg.bw_fid)
+                ax.plot(x, kde_fid(x), color=d1s_cfg.color_fid, lw=3, label=d1s_cfg.label_fid)
+            except Exception:
+                pass
 
         if len(arr_stoc) > 1:
-            kde_stoc = gaussian_kde(arr_stoc, bw_method=d1s_cfg.bw_stoc)
-            ax.plot(x, kde_stoc(x), color=d1s_cfg.color_stoc, lw=3, label=d1s_cfg.label_stoc)
+            try:
+                kde_stoc = gaussian_kde(arr_stoc, bw_method=d1s_cfg.bw_stoc)
+                ax.plot(x, kde_stoc(x), color=d1s_cfg.color_stoc, lw=3, label=d1s_cfg.label_stoc)
+            except Exception:
+                pass
 
         faint_mag = cfg.faint_limits[idx]
         ax.text(
