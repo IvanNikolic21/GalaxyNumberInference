@@ -416,14 +416,34 @@ def run_neighbor_analysis(
     if analysis_cfg is None:
         analysis_cfg = AnalysisConfig()
 
-    kwargs = dict(
-        analysis_cfg=analysis_cfg,
-        redshift_cfg=redshift_cfg,
-        muv_index=muv_index,
-        n_realizations=n_realizations,
-    )
+        # Resolve list of indices to loop over
+    if n_realizations is not None:
+        indices = list(range(n_realizations))
+    elif isinstance(muv_index, list):
+        indices = muv_index
+    else:
+        indices = [muv_index]
 
-    fiducial   = GalaxyModel.from_hdf5(redshift_cfg.muv_fiducial_path,   name="fiducial",   **kwargs)
-    stochastic = GalaxyModel.from_hdf5(redshift_cfg.muv_stochastic_path, name="stochastic", **kwargs)
+    results_fid = None
+    results_stoc = None
 
-    return fiducial.run(), stochastic.run()
+    for idx in indices:
+        kwargs = dict(
+            analysis_cfg=analysis_cfg,
+            redshift_cfg=redshift_cfg,
+            muv_index=idx,
+            n_realizations=None,  # always single realization per iteration
+        )
+        fid_i = GalaxyModel.from_hdf5(redshift_cfg.muv_fiducial_path, name="fiducial", **kwargs).run()
+        stoc_i = GalaxyModel.from_hdf5(redshift_cfg.muv_stochastic_path, name="stochastic", **kwargs).run()
+
+        if results_fid is None:
+            results_fid = fid_i
+            results_stoc = stoc_i
+        else:
+            for bkey in analysis_cfg.bright_names:
+                for fkey in analysis_cfg.faint_names:
+                    results_fid[bkey][fkey] += fid_i[bkey][fkey]
+                    results_stoc[bkey][fkey] += stoc_i[bkey][fkey]
+
+    return results_fid, results_stoc
