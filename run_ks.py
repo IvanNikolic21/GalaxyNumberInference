@@ -2,12 +2,17 @@
 """
 run_ks.py
 ---------
-Run the KS test analysis on existing d1s cache files and save results + plots.
+Run the KS/AD test analysis on existing d1s cache files for a given redshift.
 
-These particular cache files predate the redshift folder structure so their
-paths are set explicitly below.
+Usage
+-----
+    python run_ks.py --redshift 10.5
+    python run_ks.py --redshift 8.0
+    python run_ks.py --redshift 12.0
+    python run_ks.py --redshift 14.0
 """
 
+import argparse
 import logging
 import time
 from pathlib import Path
@@ -31,16 +36,34 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Paths  —  explicitly set since these predate the z-subfolder structure
+# Cache file registry — one entry per redshift
 # ---------------------------------------------------------------------------
-CACHE_DIR  = Path("/groups/astro/ivannik/projects/Neighbors/cache/z10.5/")
-OUTPUT_DIR = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
+CACHE_ROOT = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 
-CACHE_FID  = CACHE_DIR / "d1s_fiducial_real20.npz"
-CACHE_STOC = CACHE_DIR / "d1s_stochastic_real20.npz"
+CACHE_FILES = {
+    8.0:  (
+        CACHE_ROOT / "z8.0"  / "d1s_fiducial_real1.npz",
+        CACHE_ROOT / "z8.0"  / "d1s_stochastic_real1.npz",
+    ),
+    10.5: (
+        CACHE_ROOT / "z10.5" / "d1s_fiducial_real20.npz",
+        CACHE_ROOT / "z10.5" / "d1s_stochastic_real20.npz",
+    ),
+    12.0: (
+        CACHE_ROOT / "z12.0" / "d1s_fiducial_real50.npz",
+        CACHE_ROOT / "z12.0" / "d1s_stochastic_real50.npz",
+    ),
+    14.0: (
+        CACHE_ROOT / "z14.0" / "d1s_fiducial_real100.npz",
+        CACHE_ROOT / "z14.0" / "d1s_stochastic_real100.npz",
+    ),
+}
+
+AVAILABLE_REDSHIFTS = sorted(CACHE_FILES.keys())
+OUTPUT_ROOT = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
 
 # ---------------------------------------------------------------------------
-# Must match the config used when these files were computed
+# Must match the config used when the cache files were computed
 # ---------------------------------------------------------------------------
 cfg = AnalysisConfig(
     bright_limits         = [-20.5, -20.75, -21.0, -21.25, -21.5, -21.75, -22.0],
@@ -58,17 +81,37 @@ ks_cfg = KSConfig(
     summary_percentile = 90.0,
 )
 
-REDSHIFT_LABEL = 10.5   # for plot annotations
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+def parse_args():
+    p = argparse.ArgumentParser(description="KS/AD test analysis for a given redshift")
+    p.add_argument(
+        "--redshift", type=float, required=True,
+        choices=AVAILABLE_REDSHIFTS, metavar="Z",
+        help=f"Redshift to analyse. Available: {AVAILABLE_REDSHIFTS}",
+    )
+    return p.parse_args()
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    args = parse_args()
+    z = args.redshift
+
+    cache_fid, cache_stoc = CACHE_FILES[z]
+    output_dir = OUTPUT_ROOT / f"z{z}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    log.info(f"Redshift: {z}")
+    log.info(f"Fiducial cache:   {cache_fid}")
+    log.info(f"Stochastic cache: {cache_stoc}")
+    log.info(f"Output dir:       {output_dir}")
 
     log.info("Loading d1s from cache ...")
-    d1s_fid  = load_d1s(CACHE_FID,  cfg)
-    d1s_stoc = load_d1s(CACHE_STOC, cfg)
+    d1s_fid  = load_d1s(cache_fid,  cfg)
+    d1s_stoc = load_d1s(cache_stoc, cfg)
 
     plt.style.use("seaborn-v0_8-ticks")
     plt.rcParams.update({
@@ -77,7 +120,7 @@ def main():
     })
 
     for bright_key in cfg.bright_names:
-        log.info(f"Running KS analysis for bright_key={bright_key} ...")
+        log.info(f"Running KS/AD analysis: bright_key={bright_key} ...")
         t0 = time.perf_counter()
 
         results = run_ks_analysis(
@@ -87,30 +130,23 @@ def main():
         )
         log.info(f"  Done in {time.perf_counter() - t0:.1f}s")
 
-        # Print summary table
-        print(f"\n{'='*48}")
-        print(f"bright_key={bright_key}  z={REDSHIFT_LABEL}")
+        print(f"\n{'='*68}")
+        print(f"bright_key={bright_key}  z={z}")
         print(summarise_ks(results, ks_cfg))
 
-        # Histogram plot
         fig = plot_ks_results(
-            results, ks_cfg,
-            bright_key=bright_key,
-            redshift_label=REDSHIFT_LABEL,
+            results, ks_cfg, bright_key=bright_key, redshift_label=z,
         )
-        fig.savefig(OUTPUT_DIR / f"ks_hist_{bright_key}_z{REDSHIFT_LABEL}.pdf", bbox_inches="tight")
+        fig.savefig(output_dir / f"ks_hist_{bright_key}_z{z}.pdf", bbox_inches="tight")
         plt.close(fig)
 
-        # Bar chart
         fig = plot_ks_summary_bars(
-            results, ks_cfg,
-            bright_key=bright_key,
-            redshift_label=REDSHIFT_LABEL,
+            results, ks_cfg, bright_key=bright_key, redshift_label=z,
         )
-        fig.savefig(OUTPUT_DIR / f"ks_bars_{bright_key}_z{REDSHIFT_LABEL}.pdf", bbox_inches="tight")
+        fig.savefig(output_dir / f"ks_bars_{bright_key}_z{z}.pdf", bbox_inches="tight")
         plt.close(fig)
 
-        log.info(f"  Plots saved to {OUTPUT_DIR}")
+        log.info(f"  Saved plots for {bright_key}")
 
     log.info("All done.")
 
