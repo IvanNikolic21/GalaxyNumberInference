@@ -289,25 +289,14 @@ class GalaxyModel:
         self.redshift_cfg = redshift_cfg
         self.name = name
 
-        bright_cut = min(analysis_cfg.bright_limits)
+        bright_cut = max(analysis_cfg.bright_limits)
         faint_cut  = analysis_cfg.preselect_faint_limit
 
-        # When multiple realizations are concatenated, muvs is N*n_real long
-        # but halo_coords is only N long — tile coords to match.
-        n_halos = len(halo_coords)
-        n_muvs  = len(muvs)
-        if n_muvs != n_halos:
-            if n_muvs % n_halos != 0:
-                raise ValueError(
-                    f"MUV array length ({n_muvs}) is not a multiple of "
-                    f"halo catalog length ({n_halos}). Check your catalogs."
-                )
-            halo_coords = np.tile(halo_coords, (n_muvs // n_halos, 1))
-
         self.bright_coords = halo_coords[muvs < bright_cut]
-        self.bright_mags   = muvs[muvs < bright_cut]
-        self.faint_coords  = halo_coords[muvs < faint_cut]
-        self.faint_mags    = muvs[muvs < faint_cut]
+        self.bright_mags = muvs[muvs < bright_cut]
+        faint_mask = (muvs < faint_cut) & (muvs >= bright_cut)
+        self.faint_coords = halo_coords[faint_mask]
+        self.faint_mags = muvs[faint_mask]
 
     @classmethod
     def from_hdf5(
