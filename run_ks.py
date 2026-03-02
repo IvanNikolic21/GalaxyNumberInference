@@ -16,6 +16,7 @@ import argparse
 import logging
 import time
 from pathlib import Path
+import numpy as np
 
 import matplotlib
 matplotlib.use("Agg")
@@ -122,13 +123,24 @@ def main():
     for bright_key in cfg.bright_names:
         log.info(f"Running KS/AD analysis: bright_key={bright_key} ...")
         t0 = time.perf_counter()
-
-        results = run_ks_analysis(
-            d1s_fid, d1s_stoc, cfg, ks_cfg,
-            bright_key=bright_key,
-            seed=42,
-        )
-        log.info(f"  Done in {time.perf_counter() - t0:.1f}s")
+        cache_path = output_dir / f"ks_results_{bright_key}_z{z}.npz"
+        if cache_path.exists():
+            log.info(f"  {bright_key} already cached, skipping.")
+            # still need to load for plotting
+            archive = np.load(cache_path)
+            results = {fkey: {'ks': archive[f"{fkey}__ks"], 'ad': archive[f"{fkey}__ad"]}
+                       for fkey in cfg.faint_names}
+        else:
+            results = run_ks_analysis(
+                d1s_fid, d1s_stoc, cfg, ks_cfg,
+                bright_key=bright_key,
+                seed=42,
+            )
+            log.info(f"  Done in {time.perf_counter() - t0:.1f}s")
+            cache_path = output_dir / f"ks_results_{bright_key}_z{z}.npz"
+            np.savez(cache_path, **{f"{fkey}__{test}": results[fkey][test]
+                                    for fkey in results
+                                    for test in ['ks', 'ad']})
 
         print(f"\n{'='*68}")
         print(f"bright_key={bright_key}  z={z}")
