@@ -122,7 +122,7 @@ fig.suptitle(
     r"$M_{\rm UV,0}=-21.5$, $z=10.5$  —  varying $M_{\rm UV,lim}$",
     fontsize=16, y=1.02,
 )
-fig.tight_layout()
+#fig.tight_layout()
 save(fig, "fig1_vary_faint_z10p5_M21p5.pdf")
 
 # ---------------------------------------------------------------------------
