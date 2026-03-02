@@ -436,3 +436,40 @@ def run_neighbor_analysis(
                     results_stoc[bkey][fkey] += stoc_i[bkey][fkey]
 
     return results_fid, results_stoc
+
+def compute_bright_counts(
+    redshift_cfg: RedshiftConfig,
+    analysis_cfg: AnalysisConfig,
+    muv_index: int = 0,
+    n_realizations: int | None = None,
+) -> dict[str, int]:
+    """Count bright galaxies per bright limit threshold.
+
+    No neighbor search — just loads the MUV catalog and applies
+    magnitude cuts. Used to compute p_neighbor downstream.
+
+    Parameters
+    ----------
+    redshift_cfg : RedshiftConfig
+    analysis_cfg : AnalysisConfig
+    muv_index : int
+        Single realization index. Used when n_realizations is None.
+    n_realizations : int, optional
+        Loop over first N realizations and sum counts.
+
+    Returns
+    -------
+    counts : dict
+        counts[bright_key] = total number of bright galaxies across
+        all requested realizations.
+    """
+    indices = list(range(n_realizations)) if n_realizations is not None else [muv_index]
+
+    counts = {bkey: 0 for bkey in analysis_cfg.bright_names}
+
+    for idx in indices:
+        muvs = load_muv_catalog(redshift_cfg.muv_fiducial_path, index=idx)
+        for bright_limit, bkey in zip(analysis_cfg.bright_limits, analysis_cfg.bright_names):
+            counts[bkey] += int((muvs < bright_limit).sum())
+
+    return counts
