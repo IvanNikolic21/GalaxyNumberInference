@@ -160,7 +160,6 @@ def run_ks_analysis(
                 'ad': np.full(ks_cfg.n_trials, np.nan),
             }
             continue
-
         critical_ks = np.full(ks_cfg.n_trials, np.nan)
         critical_ad = np.full(ks_cfg.n_trials, np.nan)
 

@@ -71,7 +71,7 @@ REDSHIFT_CONFIGS = {
 # Used in the SLURM script comments and as documentation — override via CLI as needed.
 DEFAULT_REALIZATIONS = {
     8.0:  1,
-    10.5: 1,    # has named files (new_save / new3) rather than a large stack
+    10.5: 5,    # has named files (new_save / new3) rather than a large stack
     12.0: 50,
     14.0: 200,
 }

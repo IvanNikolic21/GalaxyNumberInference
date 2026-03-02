@@ -22,7 +22,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from galaxy_neighbors import AnalysisConfig
+from galaxy_neighbors import AnalysisConfig, RedshiftConfig, compute_bright_counts
 from galaxy_d1s import load_d1s
 from galaxy_ks import KSConfig, run_ks_analysis, plot_ks_results, plot_ks_summary_bars, summarise_ks
 
@@ -62,7 +62,17 @@ CACHE_FILES = {
 
 AVAILABLE_REDSHIFTS = sorted(CACHE_FILES.keys())
 OUTPUT_ROOT = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
+_CACHE_BASE = "/lustre/astro/ivannik/21cmFAST_cache/d12b21e80b7885d62d31717c2c2d8421"
+_HASH       = "ffa852ccaa39d8f82951cc98ff798ab4"
 
+REDSHIFT_CONFIGS = {
+    8.0:  RedshiftConfig(redshift=8.0,  halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/8.0000/HaloCatalog.h5"),  muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8.h5"),          muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8.h5")),
+    10.5: RedshiftConfig(redshift=10.5, halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"), muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_save.h5"), muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5")),
+    12.0: RedshiftConfig(redshift=12.0, halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/12.0000/HaloCatalog.h5"), muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z12.h5"),        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z12.h5")),
+    14.0: RedshiftConfig(redshift=14.0, halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"), muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14.h5"),        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14.h5")),
+}
+
+N_REALIZATIONS = {8.0: 1, 10.5: 5, 12.0: 50, 14.0: 100}
 # ---------------------------------------------------------------------------
 # Must match the config used when the cache files were computed
 # ---------------------------------------------------------------------------
@@ -82,6 +92,21 @@ ks_cfg = KSConfig(
     summary_percentile = 90.0,
 )
 
+
+def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key):
+    n_total = bright_counts[bright_key]
+    corrected = {}
+    for fkey in results:
+        n_passed = len(d1s_fid[bright_key][fkey])
+        p = n_passed / n_total if n_total > 0 else 1.0
+        corrected[fkey] = {
+            'ks': results[fkey]['ks'] / p,
+            'ad': results[fkey]['ad'] / p,
+        }
+        log.info(f"    {bright_key} | {fkey}: p_neighbor={p:.3f}  factor={1/p:.2f}")
+    return corrected
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -100,6 +125,7 @@ def parse_args():
 def main():
     args = parse_args()
     z = args.redshift
+    z_cfg = REDSHIFT_CONFIGS[z]
 
     cache_fid, cache_stoc = CACHE_FILES[z]
     output_dir = OUTPUT_ROOT / f"z{z}"
@@ -113,7 +139,10 @@ def main():
     log.info("Loading d1s from cache ...")
     d1s_fid  = load_d1s(cache_fid,  cfg)
     d1s_stoc = load_d1s(cache_stoc, cfg)
-
+    log.info("Computing bright counts for p_neighbor correction ...")
+    bright_counts = compute_bright_counts(z_cfg, cfg, n_realizations=N_REALIZATIONS[z])
+    for bkey, n in bright_counts.items():
+        log.info(f"  {bkey}: {n} bright galaxies")
     plt.style.use("seaborn-v0_8-ticks")
     plt.rcParams.update({
         "font.size": 14, "xtick.top": True, "ytick.right": True,
@@ -136,11 +165,13 @@ def main():
                 bright_key=bright_key,
                 seed=42,
             )
+
             log.info(f"  Done in {time.perf_counter() - t0:.1f}s")
             cache_path = output_dir / f"ks_results_{bright_key}_z{z}.npz"
             np.savez(cache_path, **{f"{fkey}__{test}": results[fkey][test]
                                     for fkey in results
                                     for test in ['ks', 'ad']})
+        results_corrected = apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key)
 
         print(f"\n{'='*68}")
         print(f"bright_key={bright_key}  z={z}")
