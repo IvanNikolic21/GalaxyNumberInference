@@ -49,7 +49,7 @@ CACHE = {
 # ---------------------------------------------------------------------------
 plt.style.use("seaborn-v0_8-ticks")
 plt.rcParams.update({
-    "font.size": 14, "xtick.top": True, "ytick.right": True,
+    "font.size": 16, "xtick.top": True, "ytick.right": True,
     "xtick.direction": "in", "ytick.direction": "in",
 })
 
@@ -117,9 +117,10 @@ for i, (ax, fkey, lab) in enumerate(zip(axes, FAINT_KEYS, FAINT_LABS)):
              show_ylabel=(i == 0),
              show_legend=(i == 0))
 
+fig.subplots_adjust(wspace = 0.0,)
 fig.suptitle(
     r"$M_{\rm UV,0}=-21.5$, $z=10.5$  —  varying $M_{\rm UV,lim}$",
-    fontsize=14, y=1.02,
+    fontsize=16, y=1.02,
 )
 fig.tight_layout()
 save(fig, "fig1_vary_faint_z10p5_M21p5.pdf")
@@ -134,6 +135,8 @@ BRIGHT_LABS = [r"$M_{\rm UV,0}=-21.0$",
                r"$M_{\rm UV,0}=-22.0$"]
 
 fig, axes = plt.subplots(1, 3, figsize=(13, 4), sharey=True)
+fig.subplots_adjust(wspace = 0.0,)
+
 for i, (ax, bkey, lab) in enumerate(zip(axes, BRIGHT_KEYS, BRIGHT_LABS)):
     plot_kde(ax, fid_105[bkey][FAINT_KEY],  COLOR_FID,  LABEL_FID,  BW_FID)
     plot_kde(ax, stoc_105[bkey][FAINT_KEY], COLOR_STOC, LABEL_STOC, BW_STOC)
@@ -144,7 +147,7 @@ for i, (ax, bkey, lab) in enumerate(zip(axes, BRIGHT_KEYS, BRIGHT_LABS)):
 
 fig.suptitle(
     r"$M_{\rm UV,lim}=-18.5$, $z=10.5$  —  varying $M_{\rm UV,0}$",
-    fontsize=14, y=1.02,
+    fontsize=16, y=1.02,
 )
 fig.tight_layout()
 save(fig, "fig2_vary_bright_z10p5_M18p5.pdf")
@@ -158,6 +161,7 @@ REDSHIFTS  = [8.0, 12.0, 14.0]
 Z_LABELS   = [r"$z=8$", r"$z=12$", r"$z=14$"]
 
 fig, axes = plt.subplots(1, 3, figsize=(13, 4), sharey=True)
+fig.subplots_adjust(wspace = 0.0,)
 for i, (ax, z, zlab) in enumerate(zip(axes, REDSHIFTS, Z_LABELS)):
     fid_z, stoc_z = [load_d1s(p, cfg) for p in CACHE[z]]
     plot_kde(ax, fid_z[BRIGHT_KEY][FAINT_KEY],  COLOR_FID,  LABEL_FID,  BW_FID)
@@ -169,7 +173,7 @@ for i, (ax, z, zlab) in enumerate(zip(axes, REDSHIFTS, Z_LABELS)):
 
 fig.suptitle(
     r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$  —  varying $z$",
-    fontsize=14, y=1.02,
+    fontsize=16, y=1.02,
 )
 fig.tight_layout()
 save(fig, "fig3_vary_z_M21p5_M18p5.pdf")
