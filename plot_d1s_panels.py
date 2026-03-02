@@ -61,7 +61,7 @@ BW_FID     = d1s_cfg.bw_fid
 BW_STOC    = d1s_cfg.bw_stoc
 X          = np.linspace(0, 8, 300)
 XLIM       = (0, 8)
-YLIM       = (0, 1.2)
+YLIM       = (0, 1.0)
 
 
 def plot_kde(ax, arr, color, label, bw):
@@ -120,7 +120,7 @@ for i, (ax, fkey, lab) in enumerate(zip(axes, FAINT_KEYS, FAINT_LABS)):
 fig.subplots_adjust(wspace = 0.0,)
 fig.suptitle(
     r"$M_{\rm UV,0}=-21.5$, $z=10.5$  —  varying $M_{\rm UV,lim}$",
-    fontsize=16, y=0.98,
+    fontsize=16, y=1.0,
 )
 #fig.tight_layout()
 save(fig, "fig1_vary_faint_z10p5_M21p5.pdf")
@@ -147,7 +147,7 @@ for i, (ax, bkey, lab) in enumerate(zip(axes, BRIGHT_KEYS, BRIGHT_LABS)):
 
 fig.suptitle(
     r"$M_{\rm UV,lim}=-18.5$, $z=10.5$  —  varying $M_{\rm UV,0}$",
-    fontsize=16, y=0.98,
+    fontsize=16, y=1.0,
 )
 #fig.tight_layout()
 save(fig, "fig2_vary_bright_z10p5_M18p5.pdf")
@@ -173,7 +173,7 @@ for i, (ax, z, zlab) in enumerate(zip(axes, REDSHIFTS, Z_LABELS)):
 
 fig.suptitle(
     r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$  —  varying $z$",
-    fontsize=16, y=0.98,
+    fontsize=16, y=1.0,
 )
 #fig.tight_layout()
 save(fig, "fig3_vary_z_M21p5_M18p5.pdf")
