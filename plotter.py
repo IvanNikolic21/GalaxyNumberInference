@@ -17,7 +17,7 @@ def CDF_all_gal_talk_version(d1, d1s, mag_brightest_fiducial_arr, mag_brightest_
     # plt.fill_between(0.5*(vals0[1][1:] + vals0[1][:-1]), *jacky[3], color='red', alpha=0.5)
     plt.plot(0.5 * (vals1[1][1:] + vals1[1][:-1]), np.cumsum(vals1[0]) / np.cumsum(vals1[0])[-1], color='#08519c', lw=3)
     # plt.fill_between(0.5*(vals0[1][1:] + vals0[1][:-1]), *jackys[3], color='blue', alpha=0.5)
-    plt.xlabel(r'$d_{12}$ = separation of two brightest galaxies [cMpc]', fontsize=14)
+    plt.xlabel(r'$d_{1}$ = separation of two brightest galaxies [cMpc]', fontsize=14)
     plt.ylabel(r'CDF (separation)', fontsize=14)
     plt.text(1.65, 0.90, 'intrinsically bright', color='#a63603', rotation=3)
     plt.text(2.5, 0.61, 'increased stochasticity', color='#08519c', rotation=21)
@@ -50,7 +50,7 @@ def CDF_all_gal_paper_version(d1, d1s):
     axs.plot(0.5 * (vals1[1][1:] + vals1[1][:-1]), np.cumsum(vals1[0]) / np.cumsum(vals1[0])[-1], color='#08519c', lw=3,
              label='increased stochasticity')
     # plt.fill_between(0.5*(vals0[1][1:] + vals0[1][:-1]), *jackys[3], color='blue', alpha=0.5)
-    axs.set_xlabel(r'$d_{12}$ = separation of two brightest galaxies [cMpc]', fontsize=14)
+    axs.set_xlabel(r'$d_{1}$ = separation of two brightest galaxies [cMpc]', fontsize=14)
     axs.set_ylabel(r'CDF (separation)', fontsize=14)
     plt.legend()
     plt.savefig('/groups/astro/ivannik/projects/Neighbors/CDF_all_gal_paper_version.pdf', bbox_inches='tight')
@@ -88,7 +88,7 @@ def CDF_all_gal_paper_version_split_by_N(dict_fid, dict_stoch):
              lw=3)
 
     # plt.fill_between(0.5*(vals0[1][1:] + vals0[1][:-1]), *jackys[3], color='blue', alpha=0.5)
-    axs.set_xlabel(r'$d_{12}$ = separation of two brightest galaxies [cMpc]', fontsize=14)
+    axs.set_xlabel(r'$d_{1}$ = separation of two brightest galaxies [cMpc]', fontsize=14)
     axs.set_ylabel(r'CDF(separation)', fontsize=14)
     # plt.text(1.65, 0.90,'intrinsically bright', color='red', rotation=3)
     # plt.text(2.5, 0.61,'increased stochasticity', color='blue', rotation=21)

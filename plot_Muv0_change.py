@@ -66,7 +66,7 @@ for ax, bkey in zip(axes, BRIGHT_KEYS):
         kde_stoc = gaussian_kde(arr_stoc, bw_method=d1s_cfg.bw_stoc)
         ax.plot(x, kde_stoc(x), color=d1s_cfg.color_stoc, lw=3, label=d1s_cfg.label_stoc)
 
-    ax.set_xlabel(r"$d_{12}$ [cMpc]", fontsize=14)
+    ax.set_xlabel(r"$d_{1}$ [cMpc]", fontsize=14)
     ax.set_title(rf"$M_{{UV,0}} < -{bkey.replace('M','')}$", fontsize=15)
     ax.legend(fontsize=12)
     ax.set_xlim(0, 8)

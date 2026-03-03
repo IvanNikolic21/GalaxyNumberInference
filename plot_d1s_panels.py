@@ -80,9 +80,9 @@ def style_ax(ax, title, show_xlabel=False, show_ylabel=False, show_legend=False)
     ax.set_ylim(*YLIM)
     ax.set_title(title, fontsize=13)
     if show_xlabel:
-        ax.set_xlabel(r"$d_{12}$ [cMpc]", fontsize=13)
+        ax.set_xlabel(r"$d_{1}$ [cMpc]", fontsize=13)
     if show_ylabel:
-        ax.set_ylabel(r"PDF$(d_{12})$", fontsize=13)
+        ax.set_ylabel(r"PDF$(d_{1})$", fontsize=13)
     if show_legend:
         ax.legend(fontsize=11, framealpha=0.8)
 

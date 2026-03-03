@@ -396,7 +396,7 @@ def plot_d1s_grid(
         if col == 0:
             ax.set_ylabel(r"PDF (separation)", fontsize=16)
         if row == n_rows - 1:
-            ax.set_xlabel(r"$d_{12}$ = distance to the closest neighbor [cMpc]", fontsize=16)
+            ax.set_xlabel(r"$d_{1}$ = distance to the closest neighbor [cMpc]", fontsize=16)
 
     # Title annotation on the first panel
     bright_mag = cfg.bright_limits[cfg.bright_names.index(bright_key)]
