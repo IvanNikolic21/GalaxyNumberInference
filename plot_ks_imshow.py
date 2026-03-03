@@ -106,8 +106,9 @@ for z in [10.5, 12.0, 14.0]:
     valid_rows = ~np.all(np.isnan(Ns), axis=1)
     best_xs = muv_lim[np.nanargmin(Ns[valid_rows], axis=1)]
     ax.plot(best_xs, muv_0[valid_rows], color="cyan", lw=2, marker="o", markersize=6,
-            label=r"Best $M_{\rm UV,lim}$ per $M_{\rm UV,0}$")    ax.plot(best_xs, muv_0, color="cyan", lw=2, marker="o", markersize=6,
             label=r"Best $M_{\rm UV,lim}$ per $M_{\rm UV,0}$")
+    # ax.plot(best_xs, muv_0, color="cyan", lw=2, marker="o", markersize=6,
+    #         label=r"Best $M_{\rm UV,lim}$ per $M_{\rm UV,0}$")
     ax.legend(fontsize=11, framealpha=0.7)
 
     fig.tight_layout()
