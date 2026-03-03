@@ -178,13 +178,13 @@ def main():
         print(summarise_ks(results, ks_cfg))
 
         fig = plot_ks_results(
-            results, ks_cfg, bright_key=bright_key, redshift_label=z,
+            results_corrected, ks_cfg, bright_key=bright_key, redshift_label=z,
         )
         fig.savefig(output_dir / f"ks_hist_{bright_key}_z{z}.pdf", bbox_inches="tight")
         plt.close(fig)
 
         fig = plot_ks_summary_bars(
-            results, ks_cfg, bright_key=bright_key, redshift_label=z,
+            results_corrected, ks_cfg, bright_key=bright_key, redshift_label=z,
         )
         fig.savefig(output_dir / f"ks_bars_{bright_key}_z{z}.pdf", bbox_inches="tight")
         plt.close(fig)
