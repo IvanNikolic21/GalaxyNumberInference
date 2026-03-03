@@ -87,7 +87,9 @@ for z in [10.5, 12.0, 14.0]:
             n_passed = len(d1s_fid[bkey][fkey])
             p = n_passed / n_total if n_total > 0 else 1.0
             if p > 0:
-                Ns[i, j] = np.nanmedian(archive[f"{fkey}__ks"]) / p
+                val = np.nanmedian(archive[f"{fkey}__ks"])
+                if np.isfinite(val):
+                    Ns[i, j] = val / p
 
     fig, ax = plt.subplots(figsize=(10, 5))
     im = ax.imshow(Ns, origin="lower", extent=extent, aspect="auto",
@@ -100,8 +102,11 @@ for z in [10.5, 12.0, 14.0]:
     ax.tick_params(labelsize=13)
     ax.set_title(rf"$z = {z}$", fontsize=16)
 
-    best_xs = muv_lim[np.nanargmin(Ns, axis=1)]
-    ax.plot(best_xs, muv_0, color="cyan", lw=2, marker="o", markersize=6,
+    # Only plot line for rows that have at least one valid value
+    valid_rows = ~np.all(np.isnan(Ns), axis=1)
+    best_xs = muv_lim[np.nanargmin(Ns[valid_rows], axis=1)]
+    ax.plot(best_xs, muv_0[valid_rows], color="cyan", lw=2, marker="o", markersize=6,
+            label=r"Best $M_{\rm UV,lim}$ per $M_{\rm UV,0}$")    ax.plot(best_xs, muv_0, color="cyan", lw=2, marker="o", markersize=6,
             label=r"Best $M_{\rm UV,lim}$ per $M_{\rm UV,0}$")
     ax.legend(fontsize=11, framealpha=0.7)
 
