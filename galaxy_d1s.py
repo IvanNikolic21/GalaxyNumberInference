@@ -136,7 +136,7 @@ def _compute_d1_single(neighbor: NeighborResult) -> float:
     # Step 3: sort again by distance to find the nearest companion
     # (index 0 will be the point itself with dist=0, so take index 1)
     dist_order = np.argsort(dists_from_brightest)
-    nearest_companion_coord = coords_sorted[dist_order[1]]
+    nearest_companion_coord = coords_sorted[dist_order[0]]
     d1 = np.sqrt(((coords_sorted[0] - nearest_companion_coord) ** 2).sum())
     return float(d1)
 
