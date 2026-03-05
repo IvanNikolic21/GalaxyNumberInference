@@ -140,6 +140,15 @@ def _compute_d1_single(neighbor: NeighborResult) -> float:
     dist_order = np.argsort(dists_from_brightest)
     nearest_companion_coord = coords_sorted[dist_order[0]]
     d1 = np.sqrt(((coords_sorted[0] - nearest_companion_coord) ** 2).sum())
+
+    d1 = np.sqrt(((coords_sorted[0] - nearest_companion_coord) ** 2).sum())
+    if d1 == 0:
+        print(f"Zero d1 detected!")
+        print(f"  brightest faint coord: {coords_sorted[0]}")
+        print(f"  nearest companion coord: {nearest_companion_coord}")
+        print(f"  dists_from_brightest: {dists_from_brightest[:5]}")
+        print(f"  mags_sorted[:5]: {mags_sorted[:5]}")
+    return float(d1)
     return float(d1)
 
 
