@@ -120,36 +120,37 @@ def _compute_d1_single(neighbor: NeighborResult) -> float:
     float
         d1 in Mpc (comoving).
     """
-    print(f"n_neighbors={neighbor.n_neighbors}, distances={neighbor.distances[:3]}")
-
-    mags = neighbor.faint_mags
-    coords = neighbor.faint_coords  # shape (N, 3)
-
-    # Step 1: sort by magnitude (brightest = most negative = index 0 after sort)
-    order = np.argsort(mags)
-    mags_sorted = mags[order]       # noqa: F841 (kept for clarity)
-    coords_sorted = coords[order]
-
-    # Step 2: distances from the brightest neighbor to all others
-    dists_from_brightest = np.sqrt(
-        ((coords_sorted[0] - coords_sorted) ** 2).sum(axis=1)
-    )
-
-    # Step 3: sort again by distance to find the nearest companion
-    # (central galaxy is excluded from faint pool, so index 0 is the true nearest neighbor)
-    dist_order = np.argsort(dists_from_brightest)
-    nearest_companion_coord = coords_sorted[dist_order[0]]
-    d1 = np.sqrt(((coords_sorted[0] - nearest_companion_coord) ** 2).sum())
-
-    d1 = np.sqrt(((coords_sorted[0] - nearest_companion_coord) ** 2).sum())
-    if d1 == 0:
-        print(f"Zero d1 detected!")
-        print(f"  brightest faint coord: {coords_sorted[0]}")
-        print(f"  nearest companion coord: {nearest_companion_coord}")
-        print(f"  dists_from_brightest: {dists_from_brightest[:5]}")
-        print(f"  mags_sorted[:5]: {mags_sorted[:5]}")
-    return float(d1)
-    return float(d1)
+    # print(f"n_neighbors={neighbor.n_neighbors}, distances={neighbor.distances[:3]}")
+    #
+    # mags = neighbor.faint_mags
+    # coords = neighbor.faint_coords  # shape (N, 3)
+    #
+    # # Step 1: sort by magnitude (brightest = most negative = index 0 after sort)
+    # order = np.argsort(mags)
+    # mags_sorted = mags[order]       # noqa: F841 (kept for clarity)
+    # coords_sorted = coords[order]
+    #
+    # # Step 2: distances from the brightest neighbor to all others
+    # dists_from_brightest = np.sqrt(
+    #     ((coords_sorted[0] - coords_sorted) ** 2).sum(axis=1)
+    # )
+    #
+    # # Step 3: sort again by distance to find the nearest companion
+    # # (central galaxy is excluded from faint pool, so index 0 is the true nearest neighbor)
+    # dist_order = np.argsort(dists_from_brightest)
+    # nearest_companion_coord = coords_sorted[dist_order[0]]
+    # d1 = np.sqrt(((coords_sorted[0] - nearest_companion_coord) ** 2).sum())
+    #
+    # d1 = np.sqrt(((coords_sorted[0] - nearest_companion_coord) ** 2).sum())
+    # if d1 == 0:
+    #     print(f"Zero d1 detected!")
+    #     print(f"  brightest faint coord: {coords_sorted[0]}")
+    #     print(f"  nearest companion coord: {nearest_companion_coord}")
+    #     print(f"  dists_from_brightest: {dists_from_brightest[:5]}")
+    #     print(f"  mags_sorted[:5]: {mags_sorted[:5]}")
+    # return float(d1)
+    # return float(d1)
+    return float(np.min(neighbor.distances))
 
 
 def _neighbor_passes_filter(neighbor: NeighborResult, bins: np.ndarray, min_neighbors: int) -> bool:
