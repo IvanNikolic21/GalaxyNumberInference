@@ -27,25 +27,25 @@ _CACHE_BASE = "/lustre/astro/ivannik/21cmFAST_cache/d12b21e80b7885d62d31717c2c2d
 _HASH       = "ffa852ccaa39d8f82951cc98ff798ab4"
 
 REDSHIFT_CONFIGS = {
-    8.0: RedshiftConfig(redshift=8.0,
-        halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/8.0000/HaloCatalog.h5"),
-        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8.h5"),
-        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8.h5")),
-    # 10.5: RedshiftConfig(redshift=10.5,
-    #     halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"),
-    #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_save.h5"),
-    #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5")),
-    # 12.0: RedshiftConfig(redshift=12.0,
-    #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/12.0000/HaloCatalog.h5"),
-    #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z12.h5"),
-    #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z12.h5")),
-    # 14.0: RedshiftConfig(redshift=14.0,
+    # 8.0: RedshiftConfig(redshift=8.0,
+    #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/8.0000/HaloCatalog.h5"),
+    #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8.h5"),
+    #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8.h5")),
+    # # 10.5: RedshiftConfig(redshift=10.5,
+    # #     halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"),
+    # #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_save.h5"),
+    # #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5")),
+    # # 12.0: RedshiftConfig(redshift=12.0,
+    # #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/12.0000/HaloCatalog.h5"),
+    # #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z12.h5"),
+    # #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z12.h5")),
+    # # 14.0: RedshiftConfig(redshift=14.0,
     #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"),
     #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14.h5"),
     #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14.h5")),
 }
 
-N_REALIZATIONS = {8:1}#, 10.5: 5, 12.0: 50, 14.0: 100}
+N_REALIZATIONS = {14.0: 100}
 
 CACHE_ROOT  = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 KS_ROOT     = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
