@@ -120,6 +120,8 @@ def _compute_d1_single(neighbor: NeighborResult) -> float:
     float
         d1 in Mpc (comoving).
     """
+    print(f"n_neighbors={neighbor.n_neighbors}, distances={neighbor.distances[:3]}")
+
     mags = neighbor.faint_mags
     coords = neighbor.faint_coords  # shape (N, 3)
 
