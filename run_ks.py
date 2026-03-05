@@ -118,6 +118,10 @@ def parse_args():
         choices=AVAILABLE_REDSHIFTS, metavar="Z",
         help=f"Redshift to analyse. Available: {AVAILABLE_REDSHIFTS}",
     )
+    p.add_argument(
+        "--force-recompute", action="store_true",
+        help="Ignore existing KS cache and recompute from scratch.",
+    )
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -154,7 +158,7 @@ def main():
         log.info(f"Running KS/AD analysis: bright_key={bright_key} ...")
         t0 = time.perf_counter()
         cache_path = output_dir / f"ks_results_{bright_key}_z{z}.npz"
-        if cache_path.exists():
+        if cache_path.exists() and not args.force_recompute:
             log.info(f"  {bright_key} already cached, skipping.")
             # still need to load for plotting
             archive = np.load(cache_path)
