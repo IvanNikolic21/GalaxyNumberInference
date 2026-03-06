@@ -45,7 +45,7 @@ REDSHIFT_CONFIGS = {
         muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14_300.h5")),
 }
 
-N_REALIZATIONS = {12.0: 50, 14.0: 300}
+N_REALIZATIONS = {12.0: 50, 14.0: 100}
 
 CACHE_ROOT  = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 KS_ROOT     = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
@@ -56,7 +56,7 @@ D1S_FILES = {
     #8.0: CACHE_ROOT / "z8.0" / "d1s_fiducial_real1.npz",
     # 10.5: CACHE_ROOT / "z10.5" / "d1s_fiducial_real5.npz",
     12.0: CACHE_ROOT / "z12.0" / "d1s_fiducial_real50.npz",
-    14.0: CACHE_ROOT / "z14.0" / "d1s_fiducial_real300.npz",
+    14.0: CACHE_ROOT / "z14.0" / "d1s_fiducial_real100.npz",
 }
 
 muv_lim = np.array(cfg.faint_limits)
