@@ -100,6 +100,11 @@ def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key):
     for fkey in results:
         n_passed = len(d1s_fid[bright_key][fkey])
         p = n_passed / n_total if n_total > 0 else 1.0
+        if n_total == 0 or p == 0:
+            log.warning(f"    {bright_key} | {fkey}: no bright galaxies, skipping.")
+            corrected[fkey] = {'ks': np.full_like(results[fkey]['ks'], np.nan),
+                               'ad': np.full_like(results[fkey]['ad'], np.nan)}
+            continue
         corrected[fkey] = {
             'ks': results[fkey]['ks'] / p,
             'ad': results[fkey]['ad'] / p,
