@@ -47,8 +47,8 @@ CACHE_FILES = {
         CACHE_ROOT / "z8.0"  / "d1s_stochastic_real1.npz",
     ),
     10.5: (
-        CACHE_ROOT / "z10.5" / "d1s_fiducial_real5.npz",
-        CACHE_ROOT / "z10.5" / "d1s_stochastic_real5.npz",
+        CACHE_ROOT / "z10.5" / "d1s_fiducial_real20.npz",
+        CACHE_ROOT / "z10.5" / "d1s_stochastic_real20.npz",
     ),
     12.0: (
         CACHE_ROOT / "z12.0" / "d1s_fiducial_real50.npz",
@@ -72,7 +72,7 @@ REDSHIFT_CONFIGS = {
     14.0: RedshiftConfig(redshift=14.0, halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"), muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14.h5"),        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14.h5")),
 }
 
-N_REALIZATIONS = {8.0: 1, 10.5: 5, 12.0: 50, 14.0: 100}
+N_REALIZATIONS = {8.0: 1, 10.5: 20, 12.0: 50, 14.0: 100}
 # ---------------------------------------------------------------------------
 # Must match the config used when the cache files were computed
 # ---------------------------------------------------------------------------
