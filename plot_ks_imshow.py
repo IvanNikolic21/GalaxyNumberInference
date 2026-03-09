@@ -90,12 +90,14 @@ for z in [8.0, 10.5, 12.0, 14.0]:
         archive = np.load(cache_path)
         n_total = bright_counts[bkey]
         for j, fkey in enumerate(cfg.faint_names):
-            n_passed = len(d1s_fid[bkey][fkey])
-            p = n_passed / n_total if n_total > 0 else 1.0
-            if p > 0:
+            try:
+                n_passed = len(d1s_fid[bkey][fkey])
+                p = n_passed / n_total if n_total > 0 else 1.0
                 val = np.nanmedian(archive[f"{fkey}__ks"])
-                if np.isfinite(val):
+                if p > 0 and np.isfinite(val):
                     Ns[i, j] = val / p
+            except KeyError:
+                pass  # leaves Ns[i, j] as nan
 
     fig, ax = plt.subplots(figsize=(10, 5))
     im = ax.imshow(Ns, origin="lower", extent=extent, aspect="auto",
