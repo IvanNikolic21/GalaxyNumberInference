@@ -102,6 +102,9 @@ for z in [8.0, 10.5, 12.0, 14.0]:
     fig, ax = plt.subplots(figsize=(10, 5))
     im = ax.imshow(Ns, origin="lower", extent=extent, aspect="auto",
                    cmap="magma_r", interpolation="nearest", vmin=VMIN, vmax=VMAX)
+    ns_path = OUTPUT_ROOT / f"Ns_z{z}.npz"
+    np.savez(ns_path, Ns=Ns, muv_lim=muv_lim, muv_0=muv_0)
+    print(f"  Saved Ns: {ns_path}")
     cbar = fig.colorbar(im, ax=ax)
     cbar.ax.tick_params(labelsize=13)
     cbar.ax.set_ylabel("Median pointings needed", fontsize=13)
