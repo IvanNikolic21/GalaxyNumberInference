@@ -46,7 +46,7 @@ REDSHIFT_CONFIGS = {
         muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14_300.h5")),
 }
 
-N_REALIZATIONS = {10.5: 20, 12.0: 50, 14.0: 100}
+N_REALIZATIONS = {8.0:1, 10.5: 20, 12.0: 50, 14.0: 100}
 
 CACHE_ROOT  = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 KS_ROOT     = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
