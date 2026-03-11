@@ -86,13 +86,6 @@ cfg = AnalysisConfig(
     survey_area_arcmin2   = 12.24,
 )
 
-ks_cfg = KSConfig(
-    n_trials           = 2000,
-    max_sample         = 100,
-    significance       = 0.05,
-    summary_percentile = 90.0,
-)
-
 
 def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key):
     n_total = bright_counts[bright_key]
@@ -127,6 +120,10 @@ def parse_args():
         "--force-recompute", action="store_true",
         help="Ignore existing KS cache and recompute from scratch.",
     )
+    p.add_argument(
+        "--significance", type=float, default=0.05,
+        help="P-value threshold for KS test. Default: 0.05",
+    )
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -136,6 +133,13 @@ def main():
     args = parse_args()
     z = args.redshift
     z_cfg = REDSHIFT_CONFIGS[z]
+
+    ks_cfg = KSConfig(
+        n_trials=2000,
+        max_sample=100,
+        significance=args.significance,
+        summary_percentile=90.0,
+    )
 
     cache_fid, cache_stoc = CACHE_FILES[z]
     output_dir = OUTPUT_ROOT / f"z{z}"
@@ -162,7 +166,8 @@ def main():
     for bright_key in cfg.bright_names:
         log.info(f"Running KS/AD analysis: bright_key={bright_key} ...")
         t0 = time.perf_counter()
-        cache_path = output_dir / f"ks_results_{bright_key}_z{z}.npz"
+        sig_str = str(args.significance).replace(".", "p")
+        cache_path = output_dir / f"ks_results_{bright_key}_z{z}_sig{sig_str}.npz"
         if cache_path.exists() and not args.force_recompute:
             log.info(f"  {bright_key} already cached, skipping.")
             # still need to load for plotting
