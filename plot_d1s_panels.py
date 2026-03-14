@@ -64,7 +64,7 @@ BW_FID     = d1s_cfg.bw_fid
 BW_STOC    = d1s_cfg.bw_stoc
 X          = np.linspace(0, 8, 300)
 XLIM       = (0, 8)
-YLIM       = (0, 1.0)
+YLIM       = (0, 1.5)
 
 
 def plot_kde(ax, arr, color, label, bw):
