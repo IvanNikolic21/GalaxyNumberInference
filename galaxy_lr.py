@@ -75,9 +75,9 @@ def _find_critical_sample(values: np.ndarray, threshold: float) -> int | None:
     Uses suffix-minimum: critical index is the first position where all
     subsequent values also exceed the threshold.
     """
-    suffix_min = np.minimum.accumulate(values[::-1])[::-1]
-    suffix_min = np.r_[suffix_min[1:], np.inf]
-    idx = np.where(suffix_min > threshold)[0]
+    suffix_max = np.maximum.accumulate(values[::-1])[::-1]
+    suffix_max = np.r_[suffix_max[1:], -np.inf]
+    idx = np.where(suffix_max < threshold)[0]
     return int(idx[0]) if len(idx) else None
 
 
@@ -104,18 +104,12 @@ def _calibrate_threshold(
 
     for trial in range(n_null_bootstrap):
         # Sample from model A (null)
-        null_samples = kde_B.resample(max_sample, seed=rng).flatten()
-        log_pa = np.log(np.clip(kde_A(null_samples), 1e-300, None))
-        log_pb = np.log(np.clip(kde_B(null_samples), 1e-300, None))
-        log_lr_increments = log_pb - log_pa
-
-        # Cumulative log-LR at each sample size
-        for i in range(max_sample):
-            null_lrs[trial, i] = np.sum(log_lr_increments[:i+1])
+        null_samples = kde_A.resample(max_sample, seed=rng).flatten()
+        log_ll_increments = np.log(np.clip(kde_A(null_samples), 1e-300, None))
+        null_lrs[trial] = np.cumsum(log_ll_increments)
 
     # Threshold = (1-significance) percentile of null distribution at each N
-    return np.percentile(null_lrs, (1 - significance) * 100, axis=0)
-
+    return np.percentile(null_lrs, significance * 100, axis=0)
 
 def _lr_trial(
     kde_A: gaussian_kde,
@@ -130,15 +124,8 @@ def _lr_trial(
     Draws samples from model B, computes cumulative log-LR, finds critical N.
     """
     sample_B = rng.choice(arr_stoc, size=max_sample, replace=True)
-    log_pa = np.log(np.clip(kde_A(sample_B), 1e-300, None))
-    log_pb = np.log(np.clip(kde_B(sample_B), 1e-300, None))
-    log_lr_increments = log_pb - log_pa
-
-    log_lr_cumulative = np.zeros(max_sample)
-    for i in range(max_sample):
-        log_lr_cumulative[i] = np.sum(log_lr_increments[:i+1])
-
-    return _find_critical_sample(log_lr_cumulative, thresholds)
+    log_ll = np.cumsum(np.log(np.clip(kde_A(sample_B), 1e-300, None)))
+    return _find_critical_sample(log_ll, thresholds)
 
 
 # ---------------------------------------------------------------------------
