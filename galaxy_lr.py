@@ -83,7 +83,6 @@ def _find_critical_sample(values: np.ndarray, threshold: float) -> int | None:
 
 def _calibrate_threshold(
     kde_A: gaussian_kde,
-    kde_B: gaussian_kde,
     max_sample: int,
     significance: float,
     n_null_bootstrap: int,
@@ -113,7 +112,6 @@ def _calibrate_threshold(
 
 def _lr_trial(
     kde_A: gaussian_kde,
-    kde_B: gaussian_kde,
     arr_stoc: np.ndarray,
     thresholds: np.ndarray,
     max_sample: int,
@@ -179,7 +177,7 @@ def run_lr_analysis(
         # Fit KDEs once per (bkey, fkey)
         try:
             kde_A = gaussian_kde(arr_fid,  bw_method=lr_cfg.bw_method)
-            kde_B = gaussian_kde(arr_stoc, bw_method=lr_cfg.bw_method)
+            #kde_B = gaussian_kde(arr_stoc, bw_method=lr_cfg.bw_method)
         except Exception as e:
             print(f"  Warning: KDE failed for {fkey}: {e} — skipping.")
             results[fkey] = np.full(lr_cfg.n_trials, np.nan)
@@ -187,7 +185,7 @@ def run_lr_analysis(
 
         # Calibrate threshold under null
         thresholds = _calibrate_threshold(
-            kde_A, kde_B,
+            kde_A, #kde_B,
             lr_cfg.max_sample, lr_cfg.significance,
             lr_cfg.n_null_bootstrap, rng,
         )
@@ -195,7 +193,7 @@ def run_lr_analysis(
         # Bootstrap trials
         critical_ns = np.full(lr_cfg.n_trials, np.nan)
         for trial in range(lr_cfg.n_trials):
-            c = _lr_trial(kde_A, kde_B, arr_stoc, thresholds, lr_cfg.max_sample, rng)
+            c = _lr_trial(kde_A, arr_stoc, thresholds, lr_cfg.max_sample, rng)
             if c is not None:
                 critical_ns[trial] = c
 
