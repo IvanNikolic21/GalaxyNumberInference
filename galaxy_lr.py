@@ -69,17 +69,14 @@ class LRConfig:
 # Core logic
 # ---------------------------------------------------------------------------
 
-def _find_critical_sample(values: np.ndarray, threshold: float) -> int | None:
+def _find_critical_sample(values: np.ndarray, thresholds: np.ndarray) -> int | None:
     """Find the first index where values permanently exceed threshold.
 
     Uses suffix-minimum: critical index is the first position where all
     subsequent values also exceed the threshold.
     """
-    suffix_max = np.maximum.accumulate(values[::-1])[::-1]
-    suffix_max = np.r_[suffix_max[1:], -np.inf]
-    idx = np.where(suffix_max < threshold)[0]
+    idx = np.where(values < thresholds)[0]
     return int(idx[0]) if len(idx) else None
-
 
 def _calibrate_threshold(
     kde_A: gaussian_kde,
