@@ -104,7 +104,7 @@ def _calibrate_threshold(
 
     for trial in range(n_null_bootstrap):
         # Sample from model A (null)
-        null_samples = kde_A.resample(max_sample, seed=rng).flatten()
+        null_samples = kde_B.resample(max_sample, seed=rng).flatten()
         log_pa = np.log(np.clip(kde_A(null_samples), 1e-300, None))
         log_pb = np.log(np.clip(kde_B(null_samples), 1e-300, None))
         log_lr_increments = log_pb - log_pa
