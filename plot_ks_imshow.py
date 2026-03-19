@@ -95,9 +95,10 @@ for z in [ 10.5]:
             try:
                 n_passed = len(d1s_fid[bkey][fkey])
                 p = n_passed / n_total if n_total > 0 else 1.0
-                val = np.nanmedian(archive[f"{fkey}__ks"])
+                val = np.nanmedian(archive[f"{fkey}"])
                 if p > 0 and np.isfinite(val):
                     Ns[i, j] = val / p
+                print(val/p)
             except KeyError:
                 pass  # leaves Ns[i, j] as nan
 
