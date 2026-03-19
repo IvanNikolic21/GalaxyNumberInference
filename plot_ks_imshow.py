@@ -89,6 +89,7 @@ for z in [ 10.5]:
             continue
         archive = np.load(cache_path)
         n_total = bright_counts[bkey]
+        print(f"  Found {n_total} total pointings.")
         for j, fkey in enumerate(cfg.faint_names):
             try:
                 n_passed = len(d1s_fid[bkey][fkey])
