@@ -105,7 +105,7 @@ def _calibrate_threshold(
         null_lrs[trial] = np.cumsum(log_ll_increments)
 
     # Threshold = (1-significance) percentile of null distribution at each N
-    return np.percentile(null_lrs, 50, axis=0) + np.log(significance) #alterations
+    return np.percentile(null_lrs, significance*100, axis=0) #+ np.log(significance) #alterations
 
 def _lr_trial(
     kde_A: gaussian_kde,
