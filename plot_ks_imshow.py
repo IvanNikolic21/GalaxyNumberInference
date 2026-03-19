@@ -50,7 +50,7 @@ N_REALIZATIONS = {10.5:20}
 
 CACHE_ROOT  = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 KS_ROOT     = Path("/groups/astro/ivannik/projects/Neighbors/lr_results")
-OUTPUT_ROOT = Path("/groups/astro/ivannik/projects/Neighbors/plots")
+OUTPUT_ROOT = Path("/groups/astro/ivannik/projects/Neighbors/lr_results")
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 D1S_FILES = {
@@ -74,7 +74,7 @@ plt.style.use("seaborn-v0_8-ticks")
 plt.rcParams.update({"font.size": 14, "xtick.top": True, "ytick.right": True,
                      "xtick.direction": "in", "ytick.direction": "in"})
 
-for z in [ 12.0, 14.0]:
+for z in [ 10.5]:
     print(f"Processing z={z} ...")
     ks_dir        = KS_ROOT / f"z{z}"
     d1s_fid       = load_d1s(D1S_FILES[z], cfg)
