@@ -82,6 +82,7 @@ for z in [ 10.5]:
                                           n_realizations=N_REALIZATIONS[z])
 
     Ns = np.full((len(muv_0), len(muv_lim)), np.nan)
+    print(f"  Found {len(bright_counts)} bright pointings.")
     for i, bkey in enumerate(cfg.bright_names):
         cache_path = ks_dir / f"lr_results_{bkey}_z{z}_sig0p05.npz"
         if not cache_path.exists():
