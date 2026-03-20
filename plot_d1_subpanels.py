@@ -160,7 +160,7 @@ param_xlabels = [
 ]
 
 for ax, plabs, pxlab in zip(axes, param_labels, param_xlabels):
-    x0, y0 = 0.25, 0.95
+    x0, y0 = 0.4, 0.95
     dx = 0.18
 
     # Fiducial row
@@ -170,23 +170,23 @@ for ax, plabs, pxlab in zip(axes, param_labels, param_xlabels):
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx + 0.02, y0 + 0.01, 'intrinsically bright',
-            fontsize=10, transform=ax.transAxes)
+    ax.text(x0 + 1*dx + 0.02, y0 + 0.01, 'intrinsically\nbright',
+            fontsize=14, transform=ax.transAxes)
 
     # Stochastic row
     for i, c in enumerate(colors_stoc):
         rect = mpatches.Rectangle(
-            (x0 + i*dx, y0 - 0.09), 0.12, 0.06,
+            (x0 + i*dx, y0 - 0.09), 0.03, 0.02,
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx + 0.02, y0 - 0.07, 'increased stochasticity',
-            fontsize=10, transform=ax.transAxes)
+    ax.text(x0 + 1*dx + 0.02, y0 - 0.07, 'increased\nstochasticity',
+            fontsize=14, transform=ax.transAxes)
 
     # Parameter value labels
-    ax.text(x0 - 0.22, y0 - 0.16, pxlab, fontsize=10, transform=ax.transAxes)
+    ax.text(x0 - 0.22, y0 - 0.16, pxlab, fontsize=12, transform=ax.transAxes)
     for i, lab in enumerate(plabs):
-        ax.text(x0 + i*dx + 0.01, y0 - 0.16, lab, fontsize=10, transform=ax.transAxes)
+        ax.text(x0 + i*dx + 0.01, y0 - 0.16, lab, fontsize=12, transform=ax.transAxes)
 
 # Global note on line meaning
 # fig.text(0.5, -0.02,
