@@ -158,9 +158,9 @@ param_xlabels = [
     r"$M_{\rm UV,0}=$",
     r"         $z=$",
 ]
-shifts = [-0.02, -0.02, +0.02]
+shifts = [-0.03, -0.03, +0.03]
 for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlabels)):
-    x0, y0 = 0.35, 0.85
+    x0, y0 = 0.35, 0.9
     dx = 0.13
 
     # Fiducial row
@@ -170,7 +170,7 @@ for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlab
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx -0.02 , y0 - 0.04, 'intrinsically\nbright',
+    ax.text(x0 + 3*dx -0.05 , y0 - 0.04, 'intrinsically\nbright',
             fontsize=12, transform=ax.transAxes)
 
     # Stochastic row
@@ -180,11 +180,11 @@ for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlab
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx -0.02, y0 - 0.18, 'increased\nstochasticity',
+    ax.text(x0 + 3*dx -0.05, y0 - 0.18, 'increased\nstochasticity',
             fontsize=12, transform=ax.transAxes)
 
     # Parameter value labels
-    ax.text(x0 - 0.22, y0 - 0.23, pxlab, fontsize=11, transform=ax.transAxes)
+    ax.text(x0 - 0.22, y0 - 0.235, pxlab, fontsize=11, transform=ax.transAxes)
     for i, lab in enumerate(plabs):
         ax.text(x0 + i*dx -0.01 +shifts[index_ax], y0 - 0.23, lab, fontsize=9, transform=ax.transAxes)
 
