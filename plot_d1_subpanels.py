@@ -158,7 +158,7 @@ param_xlabels = [
     r"$M_{\rm UV,0}=$",
     r"         $z=$",
 ]
-shifts = [-0.03, -0.03, +0.025]
+shifts = [-0.03, -0.03, +0.01]
 for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlabels)):
     x0, y0 = 0.35, 0.9
     dx = 0.13
