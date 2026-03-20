@@ -158,7 +158,7 @@ param_xlabels = [
     r"$M_{\rm UV,0}=$",
     r"         $z=$",
 ]
-shifts = [-0.03, -0.03, +0.03]
+shifts = [-0.03, -0.03, +0.025]
 for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlabels)):
     x0, y0 = 0.35, 0.9
     dx = 0.13
@@ -184,7 +184,7 @@ for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlab
             fontsize=12, transform=ax.transAxes)
 
     # Parameter value labels
-    ax.text(x0 - 0.22, y0 - 0.235, pxlab, fontsize=11, transform=ax.transAxes)
+    ax.text(x0 - 0.225, y0 - 0.235, pxlab, fontsize=11, transform=ax.transAxes)
     for i, lab in enumerate(plabs):
         ax.text(x0 + i*dx -0.01 +shifts[index_ax], y0 - 0.23, lab, fontsize=9, transform=ax.transAxes)
 
