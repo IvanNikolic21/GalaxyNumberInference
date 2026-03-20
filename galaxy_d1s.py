@@ -420,3 +420,45 @@ def plot_d1s_grid(
 
     fig.subplots_adjust(hspace=0.0, wspace=0.0)
     return fig
+
+
+def compute_d1s_by_n_neighbors(
+    results: dict[str, dict[str, list[NeighborResult]]],
+    cfg: AnalysisConfig,
+    redshift_cfg,
+    d1s_cfg: Optional[D1sConfig] = None,
+) -> dict[str, dict[str, dict[int, np.ndarray]]]:
+    """Compute d1 values grouped by exact neighbor count.
+
+    Same as compute_d1s but instead of a flat array per (bkey, fkey),
+    returns a dict keyed by n_neighbors.
+
+    Returns
+    -------
+    d1s_by_n : dict
+        d1s_by_n[bright_key][faint_key][n] = np.ndarray of d1 values
+        where n is the exact number of faint neighbors in the environment.
+    """
+    if d1s_cfg is None:
+        d1s_cfg = D1sConfig()
+
+    half_side = cfg.search_box_mpc(redshift_cfg.redshift)
+    bins = np.linspace(0.1, half_side * np.sqrt(2), d1s_cfg.n_bins + 1)
+
+    d1s_by_n = {bkey: {} for bkey in cfg.bright_names}
+
+    for bkey in cfg.bright_names:
+        for fkey in cfg.faint_names:
+            neighbors_list = results[bkey][fkey]
+            grouped = {}  # n -> list of d1 values
+            for neighbor in neighbors_list:
+                if not _neighbor_passes_filter(neighbor, bins, d1s_cfg.min_neighbors):
+                    continue
+                n = neighbor.n_neighbors
+                d1 = _compute_d1_single(neighbor)
+                if n not in grouped:
+                    grouped[n] = []
+                grouped[n].append(d1)
+            d1s_by_n[bkey][fkey] = {n: np.array(v) for n, v in grouped.items()}
+
+    return d1s_by_n
