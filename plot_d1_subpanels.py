@@ -161,26 +161,26 @@ param_xlabels = [
 
 for ax, plabs, pxlab in zip(axes, param_labels, param_xlabels):
     x0, y0 = 0.4, 0.95
-    dx = 0.18
+    dx = 0.07
 
     # Fiducial row
     for i, c in enumerate(colors_fid):
         rect = mpatches.Rectangle(
-            (x0 + i*dx, y0 - 0.01), 0.03, 0.02,
+            (x0 + i*dx, y0 - 0.01), 0.02, 0.02,
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 1*dx + 0.02, y0 + 0.01, 'intrinsically\nbright',
+    ax.text(x0 + 3*dx + 0.02, y0 + 0.01, 'intrinsically\nbright',
             fontsize=14, transform=ax.transAxes)
 
     # Stochastic row
     for i, c in enumerate(colors_stoc):
         rect = mpatches.Rectangle(
-            (x0 + i*dx, y0 - 0.09), 0.03, 0.02,
+            (x0 + i*dx, y0 - 0.09), 0.02, 0.02,
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 1*dx + 0.02, y0 - 0.07, 'increased\nstochasticity',
+    ax.text(x0 + 3*dx + 0.02, y0 - 0.07, 'increased\nstochasticity',
             fontsize=14, transform=ax.transAxes)
 
     # Parameter value labels
