@@ -156,12 +156,12 @@ param_labels = [
 param_xlabels = [
     r"$M_{\rm UV,lim}=$",
     r"$M_{\rm UV,0}=$",
-    r"      $z=$",
+    r"         $z=$",
 ]
 
 for ax, plabs, pxlab in zip(axes, param_labels, param_xlabels):
     x0, y0 = 0.35, 0.85
-    dx = 0.1
+    dx = 0.11
 
     # Fiducial row
     for i, c in enumerate(colors_fid):
@@ -186,7 +186,7 @@ for ax, plabs, pxlab in zip(axes, param_labels, param_xlabels):
     # Parameter value labels
     ax.text(x0 - 0.22, y0 - 0.25, pxlab, fontsize=11, transform=ax.transAxes)
     for i, lab in enumerate(plabs):
-        ax.text(x0 + i*dx -0.01 , y0 - 0.25, lab, fontsize=10, transform=ax.transAxes)
+        ax.text(x0 + i*dx -0.01 , y0 - 0.25, lab, fontsize=9, transform=ax.transAxes)
 
 # Global note on line meaning
 # fig.text(0.5, -0.02,
