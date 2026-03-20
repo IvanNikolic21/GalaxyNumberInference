@@ -166,7 +166,7 @@ for ax, plabs, pxlab in zip(axes, param_labels, param_xlabels):
     # Fiducial row
     for i, c in enumerate(colors_fid):
         rect = mpatches.Rectangle(
-            (x0 + i*dx, y0 - 0.01), 0.12, 0.06,
+            (x0 + i*dx, y0 - 0.01), 0.03, 0.02,
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
@@ -189,11 +189,12 @@ for ax, plabs, pxlab in zip(axes, param_labels, param_xlabels):
         ax.text(x0 + i*dx + 0.01, y0 - 0.16, lab, fontsize=10, transform=ax.transAxes)
 
 # Global note on line meaning
-fig.text(0.5, -0.02,
-         "Solid = intrinsically bright,  Dashed = increased stochasticity  [dashed not shown — colors match]",
-         ha='center', fontsize=10, style='italic')
+# fig.text(0.5, -0.02,
+#          "Solid = intrinsically bright,  Dashed = increased stochasticity  [dashed not shown — colors match]",
+#          ha='center', fontsize=10, style='italic')
+fig.subplots_adjust(wspace=0.02, hspace=0.02)
 
-fig.tight_layout()
+#fig.tight_layout()
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(OUTPUT, bbox_inches="tight")
 print(f"Saved: {OUTPUT}")
