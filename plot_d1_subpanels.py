@@ -161,7 +161,7 @@ param_xlabels = [
 shifts = [-0.02, -0.02, +0.02]
 for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlabels)):
     x0, y0 = 0.35, 0.85
-    dx = 0.11
+    dx = 0.12
 
     # Fiducial row
     for i, c in enumerate(colors_fid):
@@ -170,7 +170,7 @@ for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlab
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx + 0.02, y0 - 0.04, 'intrinsically\nbright',
+    ax.text(x0 + 3*dx , y0 - 0.04, 'intrinsically\nbright',
             fontsize=12, transform=ax.transAxes)
 
     # Stochastic row
@@ -180,19 +180,19 @@ for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlab
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx + 0.02, y0 - 0.18, 'increased\nstochasticity',
+    ax.text(x0 + 3*dx , y0 - 0.18, 'increased\nstochasticity',
             fontsize=12, transform=ax.transAxes)
 
     # Parameter value labels
-    ax.text(x0 - 0.22, y0 - 0.25, pxlab, fontsize=11, transform=ax.transAxes)
+    ax.text(x0 - 0.22, y0 - 0.24, pxlab, fontsize=11, transform=ax.transAxes)
     for i, lab in enumerate(plabs):
-        ax.text(x0 + i*dx -0.01 +shifts[index_ax], y0 - 0.25, lab, fontsize=8, transform=ax.transAxes)
+        ax.text(x0 + i*dx -0.01 +shifts[index_ax], y0 - 0.23, lab, fontsize=9, transform=ax.transAxes)
 
 # Global note on line meaning
 # fig.text(0.5, -0.02,
 #          "Solid = intrinsically bright,  Dashed = increased stochasticity  [dashed not shown — colors match]",
 #          ha='center', fontsize=10, style='italic')
-fig.subplots_adjust(wspace=0.02, hspace=0.02)
+fig.subplots_adjust(wspace=0.04, hspace=0.04)
 
 #fig.tight_layout()
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
