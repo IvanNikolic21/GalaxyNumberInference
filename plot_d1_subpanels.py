@@ -156,21 +156,21 @@ param_labels = [
 param_xlabels = [
     r"$M_{\rm UV,lim}=$",
     r"$M_{\rm UV,0}=$",
-    r"   $z=$",
+    r"      $z=$",
 ]
 
 for ax, plabs, pxlab in zip(axes, param_labels, param_xlabels):
-    x0, y0 = 0.4, 0.85
-    dx = 0.09
+    x0, y0 = 0.35, 0.85
+    dx = 0.1
 
     # Fiducial row
     for i, c in enumerate(colors_fid):
         rect = mpatches.Rectangle(
-            (x0 + i*dx, y0 - 0.01), 0.04, 0.02,
+            (x0 + i*dx, y0 - 0.03), 0.04, 0.02,
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx + 0.02, y0 - 0.02, 'intrinsically\nbright',
+    ax.text(x0 + 3*dx + 0.02, y0 - 0.04, 'intrinsically\nbright',
             fontsize=12, transform=ax.transAxes)
 
     # Stochastic row
