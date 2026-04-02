@@ -75,7 +75,7 @@ def sample_muv(
     sigmaUV_b: float,
 ) -> np.ndarray:
     med = median_muv(logmhs, muv_mh_dict) + Muv_add
-    sig = sigma_uv(logmhs, sigmaUV_a, sigmaUV_b)
+    sig = np.clip(sigma_uv(logmhs, sigmaUV_a, sigmaUV_b), a_min=0, a_max=np.inf)
     scatter = np.random.normal(0, sig, len(sig))
     return med + scatter
 
