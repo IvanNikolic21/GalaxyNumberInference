@@ -19,7 +19,8 @@ Usage
 import argparse
 import logging
 from pathlib import Path
-
+from multiprocessing import Pool
+from functools import partial
 import numpy as np
 import h5py
 import tables
@@ -138,11 +139,23 @@ def parse_args():
                    help="Number of MUV realizations per parameter set.")
     p.add_argument("--output-dir", type=Path, default=_OUTPUT_DIR,
                    help="Directory to save catalogs.")
+    p.add_argument("--n-workers", type=int, default=4,
+                   help="Number of parallel workers.")
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def _worker(args_tuple, n_iter, logmhs, muv_mh_dict, output_dir, n_total):
+    i, (Muv_add, sigmaUV_a, sigmaUV_b) = args_tuple
+    name = make_catalog_name(Muv_add, sigmaUV_a, sigmaUV_b)
+    out  = output_dir / name
+    if out.exists():
+        log.info(f"  [{i+1}/{n_total}] Already exists, skipping: {name}")
+        return
+    log.info(f"  [{i+1}/{n_total}] Generating: {name}")
+    generate_catalog(out, n_iter, logmhs, muv_mh_dict,
+                     Muv_add, sigmaUV_a, sigmaUV_b)
 
 def main():
     args = parse_args()
@@ -172,19 +185,15 @@ def main():
     muv_mh_dict = load_muv_mh_dict(MUV_MH_FILE)
 
     # Generate catalogs
-    for i, (Muv_add, sigmaUV_a, sigmaUV_b) in enumerate(
-        zip(Muv_adds, sigmaUV_as, sigmaUV_bs)
-    ):
-        name = make_catalog_name(Muv_add, sigmaUV_a, sigmaUV_b)
-        out  = args.output_dir / name
+    worker = partial(_worker,
+                     n_iter=args.n_iter,
+                     logmhs=logmhs,
+                     muv_mh_dict=muv_mh_dict,
+                     output_dir=args.output_dir,
+                     n_total=len(params))
 
-        if out.exists():
-            log.info(f"  [{i+1}/{len(params)}] Already exists, skipping: {name}")
-            continue
-
-        log.info(f"  [{i+1}/{len(params)}] Generating: {name}")
-        generate_catalog(out, args.n_iter, logmhs, muv_mh_dict,
-                         Muv_add, sigmaUV_a, sigmaUV_b)
+    with Pool(args.n_workers) as pool:
+        pool.map(worker, enumerate(zip(Muv_adds, sigmaUV_as, sigmaUV_bs)))
 
     log.info("All done.")
 
