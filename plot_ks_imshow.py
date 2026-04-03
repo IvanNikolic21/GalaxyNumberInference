@@ -42,11 +42,11 @@ REDSHIFT_CONFIGS = {
         muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z12.h5")),
     14.0: RedshiftConfig(redshift=14.0,
         halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"),
-        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14_300.h5"),
-        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14_300.h5")),
+        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14p0_400.h5"),
+        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14p0_400.h5")),
 }
 
-N_REALIZATIONS = {12.0: 50, 14.0: 100}
+N_REALIZATIONS = {12.0: 50, 14.0: 400}
 
 CACHE_ROOT  = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 KS_ROOT     = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
@@ -57,7 +57,7 @@ D1S_FILES = {
     # 8.0: CACHE_ROOT / "z8.0" / "d1s_fiducial_real1.npz",
     # 10.5: CACHE_ROOT / "z10.5" / "d1s_fiducial_real20.npz",
     12.0: CACHE_ROOT / "z12.0" / "d1s_fiducial_real50.npz",
-    14.0: CACHE_ROOT / "z14.0" / "d1s_fiducial_real100.npz",
+    14.0: CACHE_ROOT / "z14.0" / "d1s_fiducial_real400.npz",
 }
 
 muv_lim = np.array(cfg.faint_limits)
