@@ -302,7 +302,7 @@ def main():
     model     = NRENetwork(INPUT_DIM, args.hidden_dims, args.dropout).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=3, factor=0.5, verbose=True
+        optimizer, patience=3, factor=0.5,# verbose=True
     )
     criterion = nn.BCEWithLogitsLoss()
 
