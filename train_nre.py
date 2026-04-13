@@ -53,6 +53,9 @@ INPUT_DIM     = MAX_NEIGHBORS * N_FEATURES + N_PARAMS
 # Dataset
 # ---------------------------------------------------------------------------
 
+def normalize_params(params, param_min, param_max):
+    return 2 * (params - param_min) / (param_max - param_min) - 1
+
 class NREDataset(Dataset):
     """Loads all .npz files from database_dir.
 
@@ -99,55 +102,67 @@ class NREDataset(Dataset):
         return len(self.envs)
 
     def __getitem__(self, idx):
-        env    = self.envs[idx]        # (N_i, 4)
-        params = self.params[idx]      # (3,)
+        env = self.envs[idx]
+        params = self.params[idx]
 
-        # Pad to MAX_NEIGHBORS
+        # Pad and mask
         padded = np.zeros((MAX_NEIGHBORS, N_FEATURES), dtype=np.float32)
-        n      = min(len(env), MAX_NEIGHBORS)
+        n = min(len(env), MAX_NEIGHBORS)
         padded[:n] = env[:n]
-
-        # Mask: 1 for real tokens, 0 for padding
         mask = np.zeros(MAX_NEIGHBORS, dtype=np.float32)
         mask[:n] = 1.0
 
-        # Apply mask and flatten
-        x = (padded * mask[:, None]).flatten()
+        # Augmentation
+        if self.augment:
+            shift = np.random.uniform(-5.0, 5.0, size=(1, 3)).astype(np.float32)
+            padded[:n, :3] += shift
 
-        # Normalize params to [-1, 1]
-        theta = 2 * (params - self.param_min) / (self.param_max - self.param_min) - 1
-        theta = theta.astype(np.float32)
+        x = torch.from_numpy((padded * mask[:, None]).flatten())
 
-        return torch.from_numpy(x), torch.from_numpy(theta)
+        # Normalize real params
+        theta_real = torch.from_numpy(
+            normalize_params(params, self.param_min, self.param_max).astype(np.float32)
+        )
+
+        # Fake params — random from all params in dataset
+        fake_idx = np.random.randint(len(self.envs))
+        theta_fake = torch.from_numpy(
+            normalize_params(self.params[fake_idx], self.param_min, self.param_max).astype(np.float32)
+        )
+
+        x_real = torch.cat([x, theta_real])
+        x_fake = torch.cat([x, theta_fake])
+
+        return x_real, torch.tensor(1.0), x_fake, torch.tensor(0.0)
 
 
-class NREPairedDataset(Dataset):
-    """Wraps NREDataset to produce real + fake pairs for NRE training.
-
-    For each real (env, theta) pair, a fake pair is created by
-    shuffling theta across the batch.
-    """
-
-    def __init__(self, base: NREDataset):
-        self.base = base
-
-    def __len__(self):
-        return len(self.base)
-
-    def __getitem__(self, idx):
-        x, theta = self.base[idx]
-
-        # Fake: draw a random different theta
-        fake_idx = np.random.randint(0, len(self.base))
-        _, theta_fake = self.base[fake_idx]
-
-        # Real pair: label 1, fake pair: label 0
-        x_real  = torch.cat([x, theta])
-        x_fake  = torch.cat([x, theta_fake])
-        label_r = torch.tensor(1.0)
-        label_f = torch.tensor(0.0)
-
-        return x_real, label_r, x_fake, label_f
+# class NREPairedDataset(Dataset):
+#     """Wraps NREDataset to produce real + fake pairs for NRE training.
+#
+#     For each real (env, theta) pair, a fake pair is created by
+#     shuffling theta across the batch.
+#     """
+#
+#     def __init__(self, base: NREDataset):
+#         self.base = base
+#
+#     def __len__(self):
+#         return len(self.base)
+#
+#     def __getitem__(self, idx):
+#         x, theta = self.base[idx]
+#
+#         # Fake: draw a random different theta
+#         fake_idx = np.random.randint(0, len(self.base))
+#         _, theta_fake = self.base[fake_idx]
+#
+#         # Real pair: label 1, fake pair: label 0
+#         x_real  = torch.cat([x, theta])
+#         x_fake  = torch.cat([x, theta_fake])
+#         label_r = torch.tensor(1.0)
+#         label_f = torch.tensor(0.0)
+#
+#         return x_real, label_r, x_fake, label_f
 
 
 # ---------------------------------------------------------------------------
