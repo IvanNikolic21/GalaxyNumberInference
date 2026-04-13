@@ -138,11 +138,20 @@ class NREDataset(Dataset):
         # Draw fake theta from a different parameter set — but not too far
         # Find the catalog index of current env, pick a different one
         current_catalog = self.catalog_ids[idx]
-        fake_idx = idx
-        while self.catalog_ids[fake_idx] == current_catalog:
+        # Fake params — 50% from posterior (hard), 50% from prior (easy)
+        if np.random.rand() < 0.5:
             fake_idx = np.random.randint(len(self.envs))
+            while self.catalog_ids[fake_idx] == current_catalog:
+                fake_idx = np.random.randint(len(self.envs))
+            fake_params = self.params[fake_idx]
+        else:
+            fake_params = np.array([
+                np.random.uniform(self.param_min[0], self.param_max[0]),
+                np.random.uniform(self.param_min[1], self.param_max[1]),
+                np.random.uniform(self.param_min[2], self.param_max[2]),
+            ])
         theta_fake = torch.from_numpy(
-            normalize_params(self.params[fake_idx], self.param_min, self.param_max).astype(np.float32)
+            normalize_params(fake_params, self.param_min, self.param_max).astype(np.float32)
         )
 
         x_real = torch.cat([x, theta_real])
