@@ -60,7 +60,7 @@ class NREDataset(Dataset):
     Environments are padded to MAX_NEIGHBORS with zeros.
     """
 
-    def __init__(self, database_dir: Path, param_min: np.ndarray, param_max: np.ndarray, augment: bool = True):
+    def __init__(self, database_dir: Path, param_min: np.ndarray, param_max: np.ndarray, augment: bool = True, max_per_catalog: int = 200):
         self.param_min = param_min
         self.param_max = param_max
 
@@ -77,8 +77,11 @@ class NREDataset(Dataset):
             offsets = data['offsets']  # (n_bright + 1,)
             params  = data['params']   # (3,)
 
-            for i in range(len(offsets) - 1):
-                env = coords[offsets[i]:offsets[i+1]]
+            indices = np.arange(len(offsets) - 1)
+            if max_per_catalog is not None and len(indices) > max_per_catalog:
+                indices = np.random.choice(indices, max_per_catalog, replace=False)
+            for i in indices:
+                env = coords[offsets[i]:offsets[i + 1]]
                 if len(env) == 0:
                     continue
                 self.envs.append(env)
@@ -241,6 +244,7 @@ def parse_args():
     p.add_argument("--hidden-dims", type=int,  nargs='+', default=[512, 256, 128])
     p.add_argument("--dropout",    type=float, default=0.1)
     p.add_argument("--seed",       type=int,   default=42)
+    p.add_argument("--max-per-catalog", type=int, default=200)
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
