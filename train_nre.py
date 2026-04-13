@@ -276,21 +276,26 @@ def main():
              param_min=param_min, param_max=param_max)
 
     # Build dataset
-    base_dataset = NREDataset(args.database_dir, param_min, param_max)
-    paired       = NREPairedDataset(base_dataset)
+    base_dataset = NREDataset(args.database_dir, param_min, param_max,
+                              augment=True, max_per_catalog=args.max_per_catalog)
+    paired = NREPairedDataset(base_dataset)
 
+    n_val = int(len(paired) * args.val_frac)
+    n_train = len(paired) - n_val
+    train_ds, val_ds = random_split(paired, [n_train, n_val],
+                                    generator=torch.Generator().manual_seed(args.seed))
     # n_val   = int(len(paired) * args.val_frac)
     # n_train = len(paired) - n_val
     # train_ds, val_ds = random_split(paired, [n_train, n_val],
     #                                 generator=torch.Generator().manual_seed(args.seed))
 
-    train_ds = NREPairedDataset(NREDataset(args.database_dir, param_min, param_max, augment=True))
-    val_ds = NREPairedDataset(NREDataset(args.database_dir, param_min, param_max, augment=False))
+    # train_ds = NREPairedDataset(NREDataset(args.database_dir, param_min, param_max, augment=True))
+    # val_ds = NREPairedDataset(NREDataset(args.database_dir, param_min, param_max, augment=False))
 
     # Then split indices manually
-    n_total = len(train_ds)
-    n_val = int(n_total * args.val_frac)
-    n_train = n_total - n_val
+    n_total = n_train + n_val #len(train_ds)
+    # n_val = int(n_total * args.val_frac)
+    # n_train = n_total - n_val
     indices = torch.randperm(n_total, generator=torch.Generator().manual_seed(args.seed))
     train_ds = torch.utils.data.Subset(train_ds, indices[:n_train])
     val_ds = torch.utils.data.Subset(val_ds, indices[n_train:])
