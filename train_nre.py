@@ -66,6 +66,7 @@ class NREDataset(Dataset):
     def __init__(self, database_dir: Path, param_min: np.ndarray, param_max: np.ndarray, augment: bool = True, max_per_catalog: int = 200):
         self.param_min = param_min
         self.param_max = param_max
+        self.catalog_ids = []
         self.augment = augment
         # Load all environments and their parameters
         self.envs   = []   # list of (N_i, 4) arrays
@@ -74,7 +75,7 @@ class NREDataset(Dataset):
         files = sorted(database_dir.glob("nre_*.npz"))
         log.info(f"Loading {len(files)} catalog files ...")
 
-        for path in files:
+        for cat_idx, path in enumerate(files):
             data    = np.load(path)
             coords  = data['coords']   # (total_neighbors, 4)
             offsets = data['offsets']  # (n_bright + 1,)
@@ -89,6 +90,7 @@ class NREDataset(Dataset):
                     continue
                 self.envs.append(env)
                 self.params.append(params)
+                self.catalog_ids.append(cat_idx)
                 if augment:
                     # Random translation augmentation — shift all neighbor coords by same random offset
                     # Physical scale: search box half-side is ~12 Mpc, so shift within ±5 Mpc
@@ -125,7 +127,12 @@ class NREDataset(Dataset):
         )
 
         # Fake params — random from all params in dataset
-        fake_idx = np.random.randint(len(self.envs))
+        # Draw fake theta from a different parameter set — but not too far
+        # Find the catalog index of current env, pick a different one
+        current_catalog = self.catalog_ids[idx]
+        fake_idx = idx
+        while self.catalog_ids[fake_idx] == current_catalog:
+            fake_idx = np.random.randint(len(self.envs))
         theta_fake = torch.from_numpy(
             normalize_params(self.params[fake_idx], self.param_min, self.param_max).astype(np.float32)
         )
