@@ -66,7 +66,7 @@ class NREDataset(Dataset):
     def __init__(self, database_dir: Path, param_min: np.ndarray, param_max: np.ndarray, augment: bool = True, max_per_catalog: int = 200):
         self.param_min = param_min
         self.param_max = param_max
-
+        self.augment = augment
         # Load all environments and their parameters
         self.envs   = []   # list of (N_i, 4) arrays
         self.params = []   # list of (3,) arrays
