@@ -44,11 +44,10 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-MAX_NEIGHBORS = 200
-N_FEATURES    = 4    # dx, dy, dz, MUV
-N_PARAMS      = 3    # Muv_add, sigmaUV_a, sigmaUV_b
-INPUT_DIM     = MAX_NEIGHBORS * N_FEATURES + N_PARAMS
-
+MAX_NEIGHBORS = 10   # only keep 10 closest
+N_FEATURES    = 4
+N_PARAMS      = 3
+INPUT_DIM     = MAX_NEIGHBORS * N_FEATURES + 1 + N_PARAMS  # +1 for n_neighbors
 # ---------------------------------------------------------------------------
 # Dataset
 # ---------------------------------------------------------------------------
@@ -108,18 +107,27 @@ class NREDataset(Dataset):
         params = self.params[idx]
 
         # Pad and mask
-        padded = np.zeros((MAX_NEIGHBORS, N_FEATURES), dtype=np.float32)
-        n = min(len(env), MAX_NEIGHBORS)
-        padded[:n] = env[:n]
-        mask = np.zeros(MAX_NEIGHBORS, dtype=np.float32)
-        mask[:n] = 1.0
+        # Sort by distance (closest first)
+        dists = np.sqrt((env[:, 0] ** 2 + env[:, 1] ** 2 + env[:, 2] ** 2))
+        order = np.argsort(dists)
+        env = env[order]
 
-        # Augmentation
+        # Store total count before truncating
+        n_total = len(env)
+
+        # Keep only 10 closest, pad if fewer
+        padded = np.zeros((MAX_NEIGHBORS, N_FEATURES), dtype=np.float32)
+        n = min(n_total, MAX_NEIGHBORS)
+        padded[:n] = env[:n]
+
+        # Augmentation on xyz only
         if self.augment:
             shift = np.random.uniform(-5.0, 5.0, size=(1, 3)).astype(np.float32)
             padded[:n, :3] += shift
 
-        x = torch.from_numpy((padded * mask[:, None]).flatten())
+        # Flatten + append normalized n_neighbors
+        n_norm = np.array([n_total / 200.0], dtype=np.float32)
+        x = torch.from_numpy(np.concatenate([padded.flatten(), n_norm]))
 
         # Normalize real params
         theta_real = torch.from_numpy(
@@ -263,7 +271,7 @@ def parse_args():
     p.add_argument("--batch-size", type=int,   default=256)
     p.add_argument("--lr",         type=float, default=1e-3)
     p.add_argument("--val-frac",   type=float, default=0.2)
-    p.add_argument("--hidden-dims", type=int,  nargs='+', default=[512, 256, 128])
+    p.add_argument("--hidden-dims", type=int, nargs='+', default=[128, 64, 32])
     p.add_argument("--dropout",    type=float, default=0.1)
     p.add_argument("--seed",       type=int,   default=42)
     p.add_argument("--max-per-catalog", type=int, default=200)
