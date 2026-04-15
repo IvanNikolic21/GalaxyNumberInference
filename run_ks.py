@@ -55,8 +55,8 @@ CACHE_FILES = {
         CACHE_ROOT / "z12.0" / "d1s_stochastic_real50.npz",
     ),
     14.0: (
-        CACHE_ROOT / "z14.0" / "d1s_fiducial_real100.npz",
-        CACHE_ROOT / "z14.0" / "d1s_stochastic_real100.npz",
+        CACHE_ROOT / "z14.0" / "d1s_fiducial_real800.npz",
+        CACHE_ROOT / "z14.0" / "d1s_stochastic_real800.npz",
     ),
 }
 
@@ -69,10 +69,10 @@ REDSHIFT_CONFIGS = {
     8.0:  RedshiftConfig(redshift=8.0,  halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/8.0000/HaloCatalog.h5"),  muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8.h5"),          muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8.h5")),
     10.5: RedshiftConfig(redshift=10.5, halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"), muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_save.h5"), muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5")),
     12.0: RedshiftConfig(redshift=12.0, halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/12.0000/HaloCatalog.h5"), muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z12.h5"),        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z12.h5")),
-    14.0: RedshiftConfig(redshift=14.0, halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"), muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14p0_1000.h5"),        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14p0_1000.h5")),
+    14.0: RedshiftConfig(redshift=14.0, halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"), muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14p0_800.h5"),        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14p0_800.h5")),
 }
 
-N_REALIZATIONS = {8.0: 1, 10.5: 20, 12.0: 50, 14.0: 1000}
+N_REALIZATIONS = {8.0: 1, 10.5: 20, 12.0: 50, 14.0: 800}
 # ---------------------------------------------------------------------------
 # Must match the config used when the cache files were computed
 # ---------------------------------------------------------------------------
