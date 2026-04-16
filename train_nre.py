@@ -26,7 +26,6 @@ Usage
 
 import argparse
 import logging
-import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -343,10 +342,7 @@ def main():
     all_params = []
     for db_dir in db_dirs:
         for path in sorted(Path(db_dir).glob("nre_*.npz")):
-            try:
-                all_params.append(np.load(path)['params'])
-            except (zipfile.BadZipFile, OSError, ValueError, KeyError) as e:
-                print(f"Skipping {path}: {e}")
+            all_params.append(np.load(path)['params'])
     all_params = np.stack(all_params)
     param_min  = all_params.min(axis=0)
     param_max  = all_params.max(axis=0)
@@ -382,9 +378,14 @@ def main():
     # Model
     model     = NRENetwork(INPUT_DIM, args.hidden_dims, args.dropout).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, patience=5, factor=0.5,
-    )
+    # Warmup 5 epochs then cosine annealing
+    def lr_lambda(epoch):
+        warmup = 5
+        if epoch < warmup:
+            return float(epoch + 1) / warmup
+        progress = (epoch - warmup) / max(1, args.epochs - warmup)
+        return 0.5 * (1.0 + np.cos(np.pi * progress))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
     criterion = nn.BCEWithLogitsLoss()
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -395,7 +396,7 @@ def main():
     for epoch in range(1, args.epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
         val_loss   = val_epoch(model, val_loader, criterion, device)
-        scheduler.step(val_loss)
+        scheduler.step()
 
         log.info(f"Epoch {epoch:3d}/{args.epochs}  "
                  f"train={train_loss:.4f}  val={val_loss:.4f}")
