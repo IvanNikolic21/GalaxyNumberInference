@@ -26,6 +26,7 @@ Usage
 
 import argparse
 import logging
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -342,7 +343,10 @@ def main():
     all_params = []
     for db_dir in db_dirs:
         for path in sorted(Path(db_dir).glob("nre_*.npz")):
-            all_params.append(np.load(path)['params'])
+            try:
+                all_params.append(np.load(path)['params'])
+            except (zipfile.BadZipFile, OSError, ValueError, KeyError) as e:
+                print(f"Skipping {path}: {e}")
     all_params = np.stack(all_params)
     param_min  = all_params.min(axis=0)
     param_max  = all_params.max(axis=0)
