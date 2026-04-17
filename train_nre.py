@@ -243,7 +243,7 @@ class NRENetwork(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = INPUT_DIM,
+        input_dim: int = INPUT_DIM_FULL,
         hidden_dims: list = [256, 256, 256, 256],
         dropout: float = 0.1,
     ):
