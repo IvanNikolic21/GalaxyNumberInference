@@ -19,11 +19,11 @@ Usage
 import argparse
 import logging
 from pathlib import Path
-from multiprocessing import Pool
 from functools import partial
 import numpy as np
 import h5py
 import tables
+from multiprocessing import Pool
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -76,7 +76,7 @@ def sample_muv(
     sigmaUV_b: float,
 ) -> np.ndarray:
     med = median_muv(logmhs, muv_mh_dict) + Muv_add
-    sig = np.clip(sigma_uv(logmhs, sigmaUV_a, sigmaUV_b), a_min=0, a_max=np.inf)
+    sig = sigma_uv(logmhs, sigmaUV_a, sigmaUV_b)
     scatter = np.random.normal(0, sig, len(sig))
     return med + scatter
 
@@ -143,19 +143,28 @@ def parse_args():
                    help="Number of parallel workers.")
     return p.parse_args()
 
+
 # ---------------------------------------------------------------------------
-# Main
+# Worker function for parallel execution
 # ---------------------------------------------------------------------------
+
 def _worker(args_tuple, n_iter, logmhs, muv_mh_dict, output_dir, n_total):
     i, (Muv_add, sigmaUV_a, sigmaUV_b) = args_tuple
     name = make_catalog_name(Muv_add, sigmaUV_a, sigmaUV_b)
     out  = output_dir / name
+
     if out.exists():
         log.info(f"  [{i+1}/{n_total}] Already exists, skipping: {name}")
         return
+
     log.info(f"  [{i+1}/{n_total}] Generating: {name}")
     generate_catalog(out, n_iter, logmhs, muv_mh_dict,
                      Muv_add, sigmaUV_a, sigmaUV_b)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
     args = parse_args()
@@ -184,16 +193,24 @@ def main():
     # Load Muv-Mh relation once
     muv_mh_dict = load_muv_mh_dict(MUV_MH_FILE)
 
-    # Generate catalogs
-    worker = partial(_worker,
-                     n_iter=args.n_iter,
-                     logmhs=logmhs,
-                     muv_mh_dict=muv_mh_dict,
-                     output_dir=args.output_dir,
-                     n_total=len(params))
+    # Generate catalogs — parallel, skips already-computed files
+    worker = partial(
+        _worker,
+        n_iter      = args.n_iter,
+        logmhs      = logmhs,
+        muv_mh_dict = muv_mh_dict,
+        output_dir  = args.output_dir,
+        n_total     = len(params),
+    )
 
-    with Pool(args.n_workers) as pool:
-        pool.map(worker, enumerate(zip(Muv_adds, sigmaUV_as, sigmaUV_bs)))
+    items = list(enumerate(zip(Muv_adds, sigmaUV_as, sigmaUV_bs)))
+
+    if args.n_workers == 1:
+        for item in items:
+            worker(item)
+    else:
+        with Pool(args.n_workers) as pool:
+            pool.map(worker, items)
 
     log.info("All done.")
 

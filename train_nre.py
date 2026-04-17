@@ -46,10 +46,12 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-MAX_NEIGHBORS = 10
-N_FEATURES    = 4    # dx, dy, dz, MUV
-N_PARAMS      = 3    # Muv_add, sigmaUV_a, sigmaUV_b
-INPUT_DIM     = MAX_NEIGHBORS * N_FEATURES + 1 + N_PARAMS  # 44
+MAX_NEIGHBORS     = 10
+N_FEATURES_FULL   = 4    # dx, dy, dz, MUV
+N_FEATURES_SUMM   = 2    # distance, MUV
+N_PARAMS          = 3    # Muv_add, sigmaUV_a, sigmaUV_b
+INPUT_DIM_FULL    = MAX_NEIGHBORS * N_FEATURES_FULL + 1 + N_PARAMS  # 44
+INPUT_DIM_SUMMARY = MAX_NEIGHBORS * N_FEATURES_SUMM + 1 + N_PARAMS  # 24
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,16 +61,38 @@ def normalize_params(params, param_min, param_max):
     return (2 * (params - param_min) / (param_max - param_min) - 1).astype(np.float32)
 
 
-def env_to_array(env):
-    """Sort by distance, keep 10 closest, pad, append n_neighbors."""
+def env_to_array(env, summary_mode=False):
+    """Sort by distance, keep 10 closest, pad, append n_neighbors.
+
+    Parameters
+    ----------
+    env : np.ndarray, shape (N, 4) — (dx, dy, dz, MUV)
+    summary_mode : bool
+        If True, use only (distance, MUV) per neighbor — 2 features instead of 4.
+        Input dim becomes MAX_NEIGHBORS * 2 + 1 + N_PARAMS = 24.
+        If False, use full (dx, dy, dz, MUV) — 4 features (default).
+    """
     dists = np.sqrt((env[:, 0]**2 + env[:, 1]**2 + env[:, 2]**2))
-    env   = env[np.argsort(dists)]
+    order = np.argsort(dists)
+    env   = env[order]
+    dists = dists[order]
     n_total = len(env)
-    padded  = np.zeros((MAX_NEIGHBORS, N_FEATURES), dtype=np.float32)
     n       = min(n_total, MAX_NEIGHBORS)
-    padded[:n] = env[:n]
-    n_norm  = np.array([n_total / 200.0], dtype=np.float32)
-    return padded.flatten(), n_norm, n
+
+    if summary_mode:
+        # (distance, MUV) only — 2 features, translation invariant by construction
+        n_feat  = N_FEATURES_SUMM
+        padded  = np.zeros((MAX_NEIGHBORS, n_feat), dtype=np.float32)
+        padded[:n, 0] = dists[:n]          # distance
+        padded[:n, 1] = env[:n, 3]         # MUV
+    else:
+        # Full (dx, dy, dz, MUV) — 4 features
+        n_feat  = N_FEATURES_FULL
+        padded  = np.zeros((MAX_NEIGHBORS, n_feat), dtype=np.float32)
+        padded[:n] = env[:n]
+
+    n_norm = np.array([n_total / 200.0], dtype=np.float32)
+    return padded.flatten(), n_norm, n, dists
 
 
 # ---------------------------------------------------------------------------
@@ -97,10 +121,12 @@ class NREDataset(Dataset):
         param_max: np.ndarray,
         augment: bool = True,
         max_per_catalog: int = 200,
+        summary_mode: bool = False,
     ):
-        self.param_min = param_min
-        self.param_max = param_max
-        self.augment   = augment
+        self.param_min    = param_min
+        self.param_max    = param_max
+        self.augment      = augment
+        self.summary_mode = summary_mode
 
         self.envs        = []
         self.params      = []
@@ -142,12 +168,12 @@ class NREDataset(Dataset):
         current_catalog = self.catalog_ids[idx]
 
         # Process environment
-        flat, n_norm, n = env_to_array(env)
+        flat, n_norm, n, dists = env_to_array(env, summary_mode=self.summary_mode)
 
-        # Augmentation: random translation of xyz
-        if self.augment and n > 0:
+        # Augmentation: random translation of xyz (only in full mode — summary uses distances)
+        if self.augment and n > 0 and not self.summary_mode:
             shift = np.random.uniform(-5.0, 5.0, size=3).astype(np.float32)
-            flat_2d = flat.reshape(MAX_NEIGHBORS, N_FEATURES)
+            flat_2d = flat.reshape(MAX_NEIGHBORS, N_FEATURES_FULL)
             flat_2d[:n, :3] += shift
             flat = flat_2d.flatten()
 
@@ -315,6 +341,8 @@ def parse_args():
     p.add_argument("--dropout",          type=float, default=0.1)
     p.add_argument("--max-per-catalog",  type=int,   default=200)
     p.add_argument("--seed",             type=int,   default=42)
+    p.add_argument("--summary-mode",    action="store_true",
+                   help="Use (distance, MUV) per neighbor instead of (dx,dy,dz,MUV). "                        "Input dim: 24 instead of 44. Translation invariant by construction.")
     return p.parse_args()
 
 
@@ -353,12 +381,16 @@ def main():
              param_min=param_min, param_max=param_max)
 
     # Build dataset
+    input_dim = INPUT_DIM_SUMMARY if args.summary_mode else INPUT_DIM_FULL
+    log.info(f"Mode: {'summary (distance+MUV)' if args.summary_mode else 'full (dx,dy,dz,MUV)'}  input_dim={input_dim}")
+
     dataset = NREDataset(
         database_dirs    = db_dirs,
         param_min        = param_min,
         param_max        = param_max,
         augment          = True,
         max_per_catalog  = args.max_per_catalog,
+        summary_mode     = args.summary_mode,
     )
 
     n_val   = int(len(dataset) * args.val_frac)
@@ -376,7 +408,7 @@ def main():
     log.info(f"Train: {n_train}  Val: {n_val}")
 
     # Model
-    model     = NRENetwork(INPUT_DIM, args.hidden_dims, args.dropout).to(device)
+    model     = NRENetwork(input_dim, args.hidden_dims, args.dropout).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     # Warmup 5 epochs then cosine annealing
     def lr_lambda(epoch):
@@ -410,7 +442,8 @@ def main():
     np.savez(args.output_dir / "model_config.npz",
              hidden_dims=np.array(args.hidden_dims),
              dropout=args.dropout,
-             input_dim=INPUT_DIM)
+             input_dim=input_dim,
+             summary_mode=int(args.summary_mode))
 
     log.info(f"Training complete. Best val loss: {best_val_loss:.4f}")
     log.info(f"Model saved to: {args.output_dir}")
