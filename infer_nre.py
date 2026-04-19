@@ -68,7 +68,7 @@ class ResidualBlock(nn.Module):
 
 
 class NRENetwork(nn.Module):
-    def __init__(self, input_dim=INPUT_DIM, hidden_dims=[256,256,256,256], dropout=0.1):
+    def __init__(self, input_dim=INPUT_DIM_SUMMARY, hidden_dims=[256,256,256,256], dropout=0.1):
         super().__init__()
         self.input_proj = nn.Sequential(
             nn.Linear(input_dim, hidden_dims[0]),
