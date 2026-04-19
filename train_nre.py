@@ -31,7 +31,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader, random_split, WeightedRandomSampler
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -131,9 +131,10 @@ class NREDataset(Dataset):
         self.envs        = []
         self.params      = []
         self.catalog_ids = []
+        self.is_prior    = []  # True for environments from prior database
 
         cat_idx = 0
-        for db_dir in database_dirs:
+        for db_idx, db_dir in enumerate(database_dirs):
             files = sorted(Path(db_dir).glob("nre_*.npz"))
             log.info(f"Loading {len(files)} files from {db_dir} ...")
 
@@ -154,6 +155,7 @@ class NREDataset(Dataset):
                     self.envs.append(env)
                     self.params.append(params)
                     self.catalog_ids.append(cat_idx)
+                    self.is_prior.append(db_idx > 0)
 
                 cat_idx += 1
 
@@ -243,7 +245,7 @@ class NRENetwork(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = INPUT_DIM_FULL,
+        input_dim: int = INPUT_DIM,
         hidden_dims: list = [256, 256, 256, 256],
         dropout: float = 0.1,
     ):
@@ -341,6 +343,8 @@ def parse_args():
     p.add_argument("--dropout",          type=float, default=0.1)
     p.add_argument("--max-per-catalog",  type=int,   default=200)
     p.add_argument("--seed",             type=int,   default=42)
+    p.add_argument("--oversample-prior", action="store_true",
+                   help="Oversample prior database environments to balance 1:1 with posterior.")
     p.add_argument("--summary-mode",    action="store_true",
                    help="Use (distance, MUV) per neighbor instead of (dx,dy,dz,MUV). "                        "Input dim: 24 instead of 44. Translation invariant by construction.")
     return p.parse_args()
@@ -400,10 +404,28 @@ def main():
         generator=torch.Generator().manual_seed(args.seed)
     )
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size,
-                              shuffle=True,  num_workers=0)
-    val_loader   = DataLoader(val_ds,   batch_size=args.batch_size,
-                              shuffle=False, num_workers=0)
+    # Optionally oversample prior to balance with posterior
+    if args.oversample_prior and args.prior_database_dir is not None:
+        log.info("Applying oversampling to balance prior vs posterior ...")
+        train_indices = train_ds.indices
+        is_prior = np.array(dataset.is_prior)
+        n_prior_train = is_prior[train_indices].sum()
+        n_post_train  = (~is_prior[train_indices]).sum()
+        ratio   = n_post_train / max(n_prior_train, 1)
+        weights = np.where(is_prior[train_indices], ratio, 1.0)
+        sampler = WeightedRandomSampler(
+            weights=torch.from_numpy(weights).float(),
+            num_samples=len(train_indices),
+            replacement=True,
+        )
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size,
+                                  sampler=sampler, num_workers=0)
+        log.info(f"  Prior weight: {ratio:.2f}x  (n_post={n_post_train} n_prior={n_prior_train})")
+    else:
+        train_loader = DataLoader(train_ds, batch_size=args.batch_size,
+                                  shuffle=True,  num_workers=0)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size,
+                            shuffle=False, num_workers=0)
 
     log.info(f"Train: {n_train}  Val: {n_val}")
 
