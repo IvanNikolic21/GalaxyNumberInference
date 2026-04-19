@@ -332,7 +332,7 @@ def main():
         fontsize=14, y=1.02,
     )
 
-    out = args.output_dir / f"corner_N{len(env_tensors)}.pdf"
+    out = args.output_dir / f"corner_N{len(env_tensors)}_{true_params[0]}.pdf"
     fig.savefig(out, bbox_inches="tight")
     log.info(f"Saved: {out}")
 
