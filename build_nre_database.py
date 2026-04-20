@@ -6,10 +6,10 @@ For each catalog in the parameter grid, run a neighbor search for all bright
 galaxies and save the faint neighbor environments as NRE inputs.
 
 Each environment is the set of faint neighbors around one bright galaxy,
-stored as (x, y, z, MUV) 4-vectors.
+stored as (dx, dy, dz, MUV) 4-vectors relative to the bright galaxy.
 
 Output format per catalog: compressed .npz with:
-    coords  : float32, shape (total_neighbors, 4) — flat (x,y,z,MUV) array
+    coords  : float32, shape (total_neighbors, 4) — flat (dx,dy,dz,MUV) array, relative to bright galaxy
     offsets : int32,   shape (n_bright + 1,)      — environment boundaries
     params  : float64, shape (3,)                 — (Muv_add, sigmaUV_a, sigmaUV_b)
 
@@ -161,9 +161,9 @@ def process_one(
             offsets.append(offsets[-1])
             continue
 
-        # Stack (x, y, z, MUV) — float32 for storage efficiency
+        # Stack (dx, dy, dz, MUV) relative to bright galaxy — float32 for storage efficiency
         env = np.column_stack([
-            faint_coords_box.astype(np.float32),
+            (faint_coords_box - bright_coord).astype(np.float32),
             faint_mags_box.astype(np.float32),
         ])
         all_coords.append(env)
