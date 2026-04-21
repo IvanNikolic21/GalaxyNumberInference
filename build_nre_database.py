@@ -56,7 +56,7 @@ _CACHE_BASE = "/lustre/astro/ivannik/21cmFAST_cache/d12b21e80b7885d62d31717c2c2d
 _HASH       = "ffa852ccaa39d8f82951cc98ff798ab4"
 
 HALO_CATALOG_PATH = Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5")
-CATALOG_DIR       = Path("/lustre/astro/ivannik/catalogs_grid_prior")
+CATALOG_DIR       = Path("/lustre/astro/ivannik/catalogs_grid")
 OUTPUT_DIR        = Path("/groups/astro/ivannik/projects/Neighbors/nre_database")
 
 BRIGHT_LIMIT = -21.5
