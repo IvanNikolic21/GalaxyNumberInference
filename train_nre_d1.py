@@ -191,8 +191,16 @@ def parse_args():
         description="Train minimal d1 NRE",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--database-dir",       type=Path, required=True)
-    p.add_argument("--prior-database-dir", type=Path, default=None)
+    p.add_argument("--database-dir",       type=Path, default=None,
+                   help="Primary (posterior) database directory. "
+                        "Required unless --prior-only is set.")
+    p.add_argument("--prior-database-dir", type=Path, default=None,
+                   help="Flat prior database directory. "
+                        "Required when --prior-only is set.")
+    p.add_argument("--prior-only", action="store_true",
+                   help="Train using only the flat prior database "
+                        "(ignores --database-dir). "
+                        "Requires --prior-database-dir.")
     p.add_argument("--output-dir",  type=Path,
                    default=Path("/groups/astro/ivannik/projects/Neighbors/nre_model_d1"))
     p.add_argument("--epochs",          type=int,   default=100)
@@ -217,9 +225,17 @@ def main():
     device = torch.device("cpu")
     log.info(f"Device: {device}")
 
-    db_dirs = [args.database_dir]
-    if args.prior_database_dir is not None:
-        db_dirs.append(args.prior_database_dir)
+    if args.prior_only:
+        if args.prior_database_dir is None:
+            raise ValueError("--prior-only requires --prior-database-dir to be set.")
+        db_dirs = [args.prior_database_dir]
+        log.info("Prior-only mode: training on flat prior database only.")
+    else:
+        if args.database_dir is None:
+            raise ValueError("--database-dir is required unless --prior-only is set.")
+        db_dirs = [args.database_dir]
+        if args.prior_database_dir is not None:
+            db_dirs.append(args.prior_database_dir)
 
     # Param normalization
     log.info("Computing parameter normalization ...")
@@ -250,7 +266,7 @@ def main():
     )
 
     # Optionally oversample prior to balance with posterior
-    if args.oversample_prior and args.prior_database_dir is not None:
+    if args.oversample_prior and args.prior_database_dir is not None and not args.prior_only:
         log.info("Applying oversampling to balance prior vs posterior ...")
         train_indices = train_ds.indices
         is_prior = np.array(dataset.is_prior)
