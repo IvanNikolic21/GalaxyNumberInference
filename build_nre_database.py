@@ -107,9 +107,17 @@ def make_output_name(Muv_add: float, sigmaUV_a: float, sigmaUV_b: float) -> str:
 # Core: build environments for one catalog
 # ---------------------------------------------------------------------------
 
+# Global halo_coords — set once per worker process via Pool initializer
+_halo_coords: np.ndarray = None
+
+
+def _worker_init(halo_coords: np.ndarray):
+    global _halo_coords
+    _halo_coords = halo_coords
+
+
 def process_one(
     args_tuple,
-    halo_coords: np.ndarray,
     n_total: int,
     output_dir: Path,
 ):
@@ -137,9 +145,9 @@ def process_one(
     bright_mask = muvs < bright_cut
     faint_mask  = (muvs < faint_cut) & (muvs >= bright_cut)
 
-    bright_coords_sel = halo_coords[bright_mask]
+    bright_coords_sel = _halo_coords[bright_mask]
     bright_mags_sel   = muvs[bright_mask]
-    faint_coords_sel  = halo_coords[faint_mask]
+    faint_coords_sel  = _halo_coords[faint_mask]
     faint_mags_sel    = muvs[faint_mask]
 
     half_side = cfg.search_box_mpc(REDSHIFT)
@@ -229,18 +237,21 @@ def main():
 
     worker = partial(
         process_one,
-        halo_coords = halo_coords,
-        n_total     = len(params),
-        output_dir  = args.output_dir,
+        n_total    = len(params),
+        output_dir = args.output_dir,
     )
 
     items = list(enumerate(zip(Muv_adds, sigmaUV_as, sigmaUV_bs)))
 
     if args.n_workers == 1:
+        # Single-worker: set global directly
+        _worker_init(halo_coords)
         for item in items:
             worker(item)
     else:
-        with Pool(args.n_workers) as pool:
+        with Pool(args.n_workers,
+                  initializer=_worker_init,
+                  initargs=(halo_coords,)) as pool:
             pool.map(worker, items)
 
     log.info("All done.")
