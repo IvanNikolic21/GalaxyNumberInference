@@ -26,6 +26,7 @@ Usage
 
 import argparse
 import logging
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -394,7 +395,7 @@ def main():
         for path in sorted(Path(db_dir).glob("nre_*.npz")):
             try:
                 all_params.append(np.load(path)['params'])
-            except (EOFError, ValueError, OSError, KeyError) as e:
+            except (EOFError, ValueError, OSError, KeyError, zipfile.BadZipFile) as e:
                 print(f"Skipping corrupted file: {path} ({e})")
                 continue
     all_params = np.stack(all_params)
