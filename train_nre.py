@@ -139,7 +139,11 @@ class NREDataset(Dataset):
             log.info(f"Loading {len(files)} files from {db_dir} ...")
 
             for path in files:
-                data    = np.load(path)
+                try:
+                    data = np.load(path)
+                except (EOFError, ValueError, OSError) as e:
+                    print(f"Skipping corrupted file: {path} ({e})")
+                    continue
                 coords  = data['coords']
                 offsets = data['offsets']
                 params  = data['params']
