@@ -30,11 +30,11 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+from scipy.spatial import KDTree
 
 from galaxy_neighbors import (
     AnalysisConfig,
     RedshiftConfig,
-    find_neighbors_in_box,
     load_halo_catalog,
     load_muv_catalog,
 )
@@ -146,28 +146,26 @@ def process_one(
     faint_mask  = (muvs < faint_cut) & (muvs >= bright_cut)
 
     bright_coords_sel = _halo_coords[bright_mask]
-    bright_mags_sel   = muvs[bright_mask]
     faint_coords_sel  = _halo_coords[faint_mask]
     faint_mags_sel    = muvs[faint_mask]
 
     half_side = cfg.search_box_mpc(REDSHIFT)
 
-    # Loop over bright galaxies — collect environments
+    # Build KDTree of faint galaxies once — query with L∞ norm gives exact box search
+    tree = KDTree(faint_coords_sel)
+    neighbor_lists = tree.query_ball_point(bright_coords_sel, r=half_side, p=np.inf)
+
+    # Collect environments
     all_coords = []   # list of (N_i, 4) arrays
     offsets    = [0]
 
-    for bright_coord, bright_mag in zip(bright_coords_sel, bright_mags_sel):
-        faint_mags_box, faint_coords_box, _ = find_neighbors_in_box(
-            bright_coord  = bright_coord,
-            faint_coords  = faint_coords_sel,
-            faint_mags    = faint_mags_sel,
-            half_side     = half_side,
-            faint_limit   = FAINT_LIMIT,
-        )
-
-        if len(faint_mags_box) == 0:
+    for bright_coord, neighbors in zip(bright_coords_sel, neighbor_lists):
+        if len(neighbors) == 0:
             offsets.append(offsets[-1])
             continue
+
+        faint_coords_box = faint_coords_sel[neighbors]
+        faint_mags_box   = faint_mags_sel[neighbors]
 
         # Stack (dx, dy, dz, MUV) relative to bright galaxy — float32 for storage efficiency
         env = np.column_stack([
