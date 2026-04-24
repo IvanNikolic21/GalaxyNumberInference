@@ -82,13 +82,13 @@ class D1NREDataset(Dataset):
 
             for path in files:
                 try:
-                    data = np.load(path)
-                except (EOFError, ValueError, OSError) as e:
+                    data    = np.load(path)
+                    coords  = data['coords']
+                    offsets = data['offsets']
+                    params  = data['params']
+                except (EOFError, ValueError, OSError, KeyError, zipfile.BadZipFile) as e:
                     print(f"Skipping corrupted file: {path} ({e})")
                     continue
-                coords  = data['coords']
-                offsets = data['offsets']
-                params  = data['params']
 
                 indices = np.arange(len(offsets) - 1)
                 if max_per_catalog is not None and len(indices) > max_per_catalog:
