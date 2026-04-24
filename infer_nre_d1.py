@@ -267,6 +267,12 @@ def main():
         quantiles=[0.16, 0.5, 0.84],
         bins=40,
         smooth=1.0,
+        range = [(-1.5,2.0), (-1.0, 1.5), (0.0, 3.0)],
+        levels = [0.68,0.95],
+        color='black' ,
+        plot_datapoints=False,
+        plot_density=False,
+        fill_contours=True,
     )
     fig.suptitle(
         f"d1 NRE posterior — {len(summaries)} environment(s)  "
