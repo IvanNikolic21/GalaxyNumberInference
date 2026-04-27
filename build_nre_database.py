@@ -30,6 +30,8 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+from astropy import units as u
+from astropy.cosmology import Planck18 as cosmo
 from scipy.spatial import KDTree
 
 from galaxy_neighbors import (
@@ -120,6 +122,8 @@ def process_one(
     args_tuple,
     n_total: int,
     output_dir: Path,
+    dz_lower: float | None = None,
+    dz_upper: float | None = None,
 ):
     i, (Muv_add, sigmaUV_a, sigmaUV_b) = args_tuple
 
@@ -151,9 +155,24 @@ def process_one(
 
     half_side = cfg.search_box_mpc(REDSHIFT)
 
-    # Build KDTree of faint galaxies once — query with L∞ norm gives exact box search
-    tree = KDTree(faint_coords_sel)
-    neighbor_lists = tree.query_ball_point(bright_coords_sel, r=half_side, p=np.inf)
+    # Build KDTree of faint galaxies once — query with L∞ norm gives exact box search.
+    # When photo-z bounds are provided: 2D KDTree on (x,y) + manual z filter per bright galaxy.
+    if dz_lower is not None:
+        tree2d = KDTree(faint_coords_sel[:, :2])
+        candidate_lists = tree2d.query_ball_point(bright_coords_sel[:, :2], r=half_side, p=np.inf)
+        neighbor_lists = []
+        for bright_coord, candidates in zip(bright_coords_sel, candidate_lists):
+            if len(candidates) == 0:
+                neighbor_lists.append([])
+                continue
+            cands = np.array(candidates)
+            bz    = bright_coord[2]
+            z_ok  = (faint_coords_sel[cands, 2] >= bz - dz_lower) & \
+                    (faint_coords_sel[cands, 2] <= bz + dz_upper)
+            neighbor_lists.append(cands[z_ok].tolist())
+    else:
+        tree = KDTree(faint_coords_sel)
+        neighbor_lists = tree.query_ball_point(bright_coords_sel, r=half_side, p=np.inf)
 
     # Collect environments
     all_coords = []   # list of (N_i, 4) arrays
@@ -207,6 +226,12 @@ def parse_args():
                    help="Number of parallel workers.")
     p.add_argument("--output-dir", type=Path, default=OUTPUT_DIR,
                    help="Directory to save NRE input files.")
+    p.add_argument("--photo-z-uncertainty", type=float, default=None,
+                   help="Photometric redshift uncertainty (delta-z). "
+                        "Converted to comoving Mpc asymmetrically via astropy: "
+                        "dz_upper = D_C(z+dz) - D_C(z), dz_lower = D_C(z) - D_C(z-dz). "
+                        "When set, the z search box uses these asymmetric bounds and the "
+                        "output directory gets a '_photzX' suffix.")
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -215,6 +240,19 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # Compute photo-z comoving bounds and auto-suffix output dir
+    dz_lower = dz_upper = None
+    if args.photo_z_uncertainty is not None:
+        dz = args.photo_z_uncertainty
+        z  = REDSHIFT
+        dz_upper = (cosmo.comoving_distance(z + dz) - cosmo.comoving_distance(z)).to(u.Mpc).value
+        dz_lower = (cosmo.comoving_distance(z)       - cosmo.comoving_distance(z - dz)).to(u.Mpc).value
+        dz_str   = f"{dz:.2f}".replace(".", "p")
+        args.output_dir = args.output_dir.parent / (args.output_dir.name + f"_photz{dz_str}")
+        log.info(f"Photo-z uncertainty: dz={dz}  "
+                 f"dz_lower={dz_lower:.2f} Mpc  dz_upper={dz_upper:.2f} Mpc")
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load parameter grid
@@ -237,6 +275,8 @@ def main():
         process_one,
         n_total    = len(params),
         output_dir = args.output_dir,
+        dz_lower   = dz_lower,
+        dz_upper   = dz_upper,
     )
 
     items = list(enumerate(zip(Muv_adds, sigmaUV_as, sigmaUV_bs)))

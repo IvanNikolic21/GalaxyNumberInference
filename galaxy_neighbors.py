@@ -240,13 +240,24 @@ def find_neighbors_in_box(
     faint_mags: np.ndarray,
     half_side: float,
     faint_limit: float,
+    half_side_z_lower: float | None = None,
+    half_side_z_upper: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Find faint galaxies within a cuboid search box around a bright galaxy."""
+    """Find faint galaxies within a cuboid search box around a bright galaxy.
+
+    By default the box is symmetric in all three dimensions (half_side).
+    When half_side_z_lower / half_side_z_upper are provided, the z extent
+    uses those values instead — enabling an anisotropic box appropriate for
+    photometric redshift surveys where the line-of-sight uncertainty differs
+    from the angular search radius.
+    """
     bx, by, bz = bright_coord
+    hz_lo = half_side_z_lower if half_side_z_lower is not None else half_side
+    hz_hi = half_side_z_upper if half_side_z_upper is not None else half_side
     box_mask = (
         (faint_coords[:, 0] >= bx - half_side) & (faint_coords[:, 0] <= bx + half_side) &
         (faint_coords[:, 1] >= by - half_side) & (faint_coords[:, 1] <= by + half_side) &
-        (faint_coords[:, 2] >= bz - half_side) & (faint_coords[:, 2] <= bz + half_side) &
+        (faint_coords[:, 2] >= bz - hz_lo)     & (faint_coords[:, 2] <= bz + hz_hi)     &
         (faint_mags < faint_limit)
     )
 
