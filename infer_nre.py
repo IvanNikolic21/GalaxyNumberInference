@@ -47,6 +47,7 @@ log = logging.getLogger(__name__)
 MAX_NEIGHBORS     = 10
 N_FEATURES_FULL   = 4
 N_FEATURES_SUMM   = 2
+N_FEATURES_ANG    = 3    # dx, dy, MUV (no dz)
 N_PARAMS          = 3
 INPUT_DIM_FULL    = MAX_NEIGHBORS * N_FEATURES_FULL + 1 + N_PARAMS  # 44
 INPUT_DIM_SUMMARY = MAX_NEIGHBORS * N_FEATURES_SUMM + 1 + N_PARAMS  # 24
@@ -103,8 +104,11 @@ def normalize_params(params, param_min, param_max):
     return (2 * (params - param_min) / (param_max - param_min) - 1).astype(np.float32)
 
 
-def env_to_tensor(env, summary_mode=False):
-    dists = np.sqrt((env[:, 0]**2 + env[:, 1]**2 + env[:, 2]**2))
+def env_to_tensor(env, summary_mode=False, only_angular=False):
+    if only_angular:
+        dists = np.sqrt(env[:, 0]**2 + env[:, 1]**2)
+    else:
+        dists = np.sqrt(env[:, 0]**2 + env[:, 1]**2 + env[:, 2]**2)
     order = np.argsort(dists)
     env   = env[order]
     dists = dists[order]
@@ -115,6 +119,11 @@ def env_to_tensor(env, summary_mode=False):
         padded = np.zeros((MAX_NEIGHBORS, N_FEATURES_SUMM), dtype=np.float32)
         padded[:n, 0] = dists[:n]
         padded[:n, 1] = env[:n, 3]
+    elif only_angular:
+        padded = np.zeros((MAX_NEIGHBORS, N_FEATURES_ANG), dtype=np.float32)
+        padded[:n, 0] = env[:n, 0]   # dx
+        padded[:n, 1] = env[:n, 1]   # dy
+        padded[:n, 2] = env[:n, 3]   # MUV (skip dz)
     else:
         padded = np.zeros((MAX_NEIGHBORS, N_FEATURES_FULL), dtype=np.float32)
         padded[:n] = env[:n]
@@ -238,8 +247,11 @@ def parse_args():
                    help="MCMC steps per walker.")
     p.add_argument("--n-burn",     type=int,  default=500,
                    help="MCMC burn-in steps.")
-    p.add_argument("--truths",     type=float, nargs=3, default=None,
+    p.add_argument("--truths",       type=float, nargs=3, default=None,
                    help="True parameter values for marking on plot (optional).")
+    p.add_argument("--only-angular", action="store_true",
+                   help="Use projected 2D distance sqrt(dx²+dy²). "
+                        "Loaded from model_config.npz if not set.")
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -260,7 +272,11 @@ def main():
     dropout      = float(config['dropout'])
     input_dim    = int(config['input_dim'])
     summary_mode = bool(int(config['summary_mode'])) if 'summary_mode' in config else False
-    log.info(f"Mode: {'summary' if summary_mode else 'full'}  input_dim={input_dim}")
+    only_angular = bool(int(config['only_angular'])) if 'only_angular' in config else False
+    if args.only_angular:
+        only_angular = True  # CLI flag overrides config
+    log.info(f"Mode: {'summary' if summary_mode else 'full'}  "
+             f"only_angular={only_angular}  input_dim={input_dim}")
 
     model = NRENetwork(input_dim, hidden_dims, dropout)
     model.load_state_dict(torch.load(args.model_dir / "nre_best.pt", map_location="cpu"))
@@ -285,7 +301,8 @@ def main():
     for i in range(len(obs_offs) - 1):
         env = obs_coords[obs_offs[i]:obs_offs[i+1]]
         if len(env) > 0:
-            env_tensors.append(env_to_tensor(env, summary_mode=summary_mode))
+            env_tensors.append(env_to_tensor(env, summary_mode=summary_mode,
+                                             only_angular=only_angular))
         if len(env_tensors) == args.n_obs:
             break
     log.info(f"Using {len(env_tensors)} environments.")

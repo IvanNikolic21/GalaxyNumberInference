@@ -68,9 +68,12 @@ def normalize_params(params, param_min, param_max):
     return (2 * (params - param_min) / (param_max - param_min) - 1).astype(np.float32)
 
 
-def env_to_d1_summary(env):
+def env_to_d1_summary(env, only_angular=False):
     """Extract (d1, MUV_nearest, n_neighbors_normalized) from environment."""
-    dists   = np.sqrt((env[:, 0]**2 + env[:, 1]**2 + env[:, 2]**2))
+    if only_angular:
+        dists = np.sqrt(env[:, 0]**2 + env[:, 1]**2)
+    else:
+        dists = np.sqrt(env[:, 0]**2 + env[:, 1]**2 + env[:, 2]**2)
     nearest = np.argmin(dists)
     d1      = dists[nearest]
     muv_nn  = env[nearest, 3]
@@ -187,8 +190,11 @@ def parse_args():
     p.add_argument("--n-walkers",  type=int,  default=32)
     p.add_argument("--n-steps",    type=int,  default=2000)
     p.add_argument("--n-burn",     type=int,  default=500)
-    p.add_argument("--truths",     type=float, nargs=3, default=None,
+    p.add_argument("--truths",       type=float, nargs=3, default=None,
                    help="True params (Muv_add sigmaUV_a sigmaUV_b) if not in file.")
+    p.add_argument("--only-angular", action="store_true",
+                   help="Use projected 2D distance sqrt(dx²+dy²). "
+                        "Loaded from model_config.npz if not set.")
     return p.parse_args()
 
 
@@ -206,9 +212,13 @@ def main():
     param_min = norm['param_min']
     param_max = norm['param_max']
 
-    hidden_dims = list(config['hidden_dims'])
-    dropout     = float(config['dropout'])
-    input_dim   = int(config['input_dim'])
+    hidden_dims  = list(config['hidden_dims'])
+    dropout      = float(config['dropout'])
+    input_dim    = int(config['input_dim'])
+    only_angular = bool(int(config['only_angular'])) if 'only_angular' in config else False
+    if args.only_angular:
+        only_angular = True  # CLI flag overrides config
+    log.info(f"only_angular={only_angular}")
 
     model = D1NRENetwork(input_dim, hidden_dims, dropout)
     model.load_state_dict(torch.load(args.model_dir / "nre_best.pt", map_location="cpu"))
@@ -232,7 +242,7 @@ def main():
     for i in range(len(obs_offs) - 1):
         env = obs_coords[obs_offs[i]:obs_offs[i+1]]
         if len(env) > 0:
-            summaries.append(env_to_d1_summary(env))
+            summaries.append(env_to_d1_summary(env, only_angular=only_angular))
         if len(summaries) == args.n_obs:
             break
     log.info(f"Using {len(summaries)} environments.")

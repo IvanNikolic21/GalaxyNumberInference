@@ -38,18 +38,23 @@ def normalize_params(params, param_min, param_max):
     return (2 * (params - param_min) / (param_max - param_min) - 1).astype(np.float32)
 
 
-def env_to_d1_summary(env):
+def env_to_d1_summary(env, only_angular=False):
     """Extract (d1, MUV_nearest, n_neighbors) from environment.
 
     Parameters
     ----------
     env : np.ndarray, shape (N, 4) — (dx, dy, dz, MUV)
+    only_angular : bool
+        If True, use projected 2D distance sqrt(dx²+dy²) instead of full 3D.
 
     Returns
     -------
     np.ndarray, shape (3,) — (d1, MUV_nearest, n_neighbors_normalized)
     """
-    dists   = np.sqrt((env[:, 0]**2 + env[:, 1]**2 + env[:, 2]**2))
+    if only_angular:
+        dists = np.sqrt(env[:, 0]**2 + env[:, 1]**2)
+    else:
+        dists = np.sqrt(env[:, 0]**2 + env[:, 1]**2 + env[:, 2]**2)
     nearest = np.argmin(dists)
     d1      = dists[nearest]
     muv_nn  = env[nearest, 3]
@@ -66,9 +71,11 @@ class D1NREDataset(Dataset):
         param_min: np.ndarray,
         param_max: np.ndarray,
         max_per_catalog: int = 200,
+        only_angular: bool = False,
     ):
-        self.param_min = param_min
-        self.param_max = param_max
+        self.param_min    = param_min
+        self.param_max    = param_max
+        self.only_angular = only_angular
 
         self.summaries   = []
         self.params      = []
@@ -98,7 +105,7 @@ class D1NREDataset(Dataset):
                     env = coords[offsets[i]:offsets[i+1]]
                     if len(env) == 0:
                         continue
-                    self.summaries.append(env_to_d1_summary(env))
+                    self.summaries.append(env_to_d1_summary(env, only_angular=self.only_angular))
                     self.params.append(params)
                     self.catalog_ids.append(cat_idx)
                     self.is_prior.append(db_idx > 0)
@@ -214,14 +221,22 @@ def parse_args():
     p.add_argument("--hidden-dims",     type=int,   nargs='+', default=[64, 64, 64])
     p.add_argument("--dropout",         type=float, default=0.1)
     p.add_argument("--max-per-catalog", type=int,   default=200)
-    p.add_argument("--oversample-prior",action="store_true",
+    p.add_argument("--oversample-prior", action="store_true",
                    help="Oversample prior database to balance with posterior.")
-    p.add_argument("--seed",            type=int,   default=42)
+    p.add_argument("--only-angular",     action="store_true",
+                   help="Use projected 2D distance sqrt(dx²+dy²) instead of full 3D. "
+                        "Matches real observations with angular separations only.")
+    p.add_argument("--seed",             type=int,   default=42)
     return p.parse_args()
 
 
 def main():
     args = parse_args()
+
+    # Suffix output dir for angular-only models to avoid overwriting standard models
+    if args.only_angular:
+        args.output_dir = args.output_dir.parent / (args.output_dir.name + "_only_ang")
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     torch.manual_seed(args.seed)
@@ -264,6 +279,7 @@ def main():
         param_min       = param_min,
         param_max       = param_max,
         max_per_catalog = args.max_per_catalog,
+        only_angular    = args.only_angular,
     )
 
     n_val   = int(len(dataset) * args.val_frac)
@@ -331,7 +347,8 @@ def main():
              hidden_dims=np.array(args.hidden_dims),
              dropout=args.dropout,
              input_dim=INPUT_DIM,
-             summary_mode=2)  # 2 = d1 mode, distinct from 0=full, 1=summary
+             summary_mode=2,  # 2 = d1 mode, distinct from 0=full, 1=summary
+             only_angular=int(args.only_angular))
 
     log.info(f"Training complete. Best val loss: {best_val_loss:.4f}")
     log.info(f"Model saved to: {args.output_dir}")

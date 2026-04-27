@@ -47,12 +47,14 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-MAX_NEIGHBORS     = 10
-N_FEATURES_FULL   = 4    # dx, dy, dz, MUV
-N_FEATURES_SUMM   = 2    # distance, MUV
-N_PARAMS          = 3    # Muv_add, sigmaUV_a, sigmaUV_b
-INPUT_DIM_FULL    = MAX_NEIGHBORS * N_FEATURES_FULL + 1 + N_PARAMS  # 44
-INPUT_DIM_SUMMARY = MAX_NEIGHBORS * N_FEATURES_SUMM + 1 + N_PARAMS  # 24
+MAX_NEIGHBORS      = 10
+N_FEATURES_FULL    = 4    # dx, dy, dz, MUV
+N_FEATURES_SUMM    = 2    # distance, MUV
+N_FEATURES_ANG     = 3    # dx, dy, MUV (no dz)
+N_PARAMS           = 3    # Muv_add, sigmaUV_a, sigmaUV_b
+INPUT_DIM_FULL     = MAX_NEIGHBORS * N_FEATURES_FULL + 1 + N_PARAMS  # 44
+INPUT_DIM_SUMMARY  = MAX_NEIGHBORS * N_FEATURES_SUMM + 1 + N_PARAMS  # 24
+INPUT_DIM_ANGULAR  = MAX_NEIGHBORS * N_FEATURES_ANG  + 1 + N_PARAMS  # 34
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -62,7 +64,7 @@ def normalize_params(params, param_min, param_max):
     return (2 * (params - param_min) / (param_max - param_min) - 1).astype(np.float32)
 
 
-def env_to_array(env, summary_mode=False):
+def env_to_array(env, summary_mode=False, only_angular=False):
     """Sort by distance, keep 10 closest, pad, append n_neighbors.
 
     Parameters
@@ -72,8 +74,15 @@ def env_to_array(env, summary_mode=False):
         If True, use only (distance, MUV) per neighbor — 2 features instead of 4.
         Input dim becomes MAX_NEIGHBORS * 2 + 1 + N_PARAMS = 24.
         If False, use full (dx, dy, dz, MUV) — 4 features (default).
+    only_angular : bool
+        If True, use projected 2D distance sqrt(dx²+dy²) instead of full 3D
+        distance sqrt(dx²+dy²+dz²). Matches real observations where only
+        angular separation is available.
     """
-    dists = np.sqrt((env[:, 0]**2 + env[:, 1]**2 + env[:, 2]**2))
+    if only_angular:
+        dists = np.sqrt(env[:, 0]**2 + env[:, 1]**2)
+    else:
+        dists = np.sqrt(env[:, 0]**2 + env[:, 1]**2 + env[:, 2]**2)
     order = np.argsort(dists)
     env   = env[order]
     dists = dists[order]
@@ -84,8 +93,15 @@ def env_to_array(env, summary_mode=False):
         # (distance, MUV) only — 2 features, translation invariant by construction
         n_feat  = N_FEATURES_SUMM
         padded  = np.zeros((MAX_NEIGHBORS, n_feat), dtype=np.float32)
-        padded[:n, 0] = dists[:n]          # distance
+        padded[:n, 0] = dists[:n]          # distance (2D if only_angular, else 3D)
         padded[:n, 1] = env[:n, 3]         # MUV
+    elif only_angular:
+        # (dx, dy, MUV) — 3 features, dz dropped
+        n_feat  = N_FEATURES_ANG
+        padded  = np.zeros((MAX_NEIGHBORS, n_feat), dtype=np.float32)
+        padded[:n, 0] = env[:n, 0]         # dx
+        padded[:n, 1] = env[:n, 1]         # dy
+        padded[:n, 2] = env[:n, 3]         # MUV (skip dz at index 2)
     else:
         # Full (dx, dy, dz, MUV) — 4 features
         n_feat  = N_FEATURES_FULL
@@ -123,11 +139,13 @@ class NREDataset(Dataset):
         augment: bool = True,
         max_per_catalog: int = 200,
         summary_mode: bool = False,
+        only_angular: bool = False,
     ):
         self.param_min    = param_min
         self.param_max    = param_max
         self.augment      = augment
         self.summary_mode = summary_mode
+        self.only_angular = only_angular
 
         self.envs        = []
         self.params      = []
@@ -175,7 +193,8 @@ class NREDataset(Dataset):
         current_catalog = self.catalog_ids[idx]
 
         # Process environment
-        flat, n_norm, n, dists = env_to_array(env, summary_mode=self.summary_mode)
+        flat, n_norm, n, dists = env_to_array(env, summary_mode=self.summary_mode,
+                                               only_angular=self.only_angular)
 
         # Augmentation: random translation of xyz (only in full mode — summary uses distances)
         if self.augment and n > 0 and not self.summary_mode:
@@ -358,6 +377,9 @@ def parse_args():
                    help="Oversample prior database environments to balance 1:1 with posterior.")
     p.add_argument("--summary-mode",    action="store_true",
                    help="Use (distance, MUV) per neighbor instead of (dx,dy,dz,MUV). "                        "Input dim: 24 instead of 44. Translation invariant by construction.")
+    p.add_argument("--only-angular",    action="store_true",
+                   help="Use projected 2D distance sqrt(dx²+dy²) instead of full 3D. "
+                        "Matches real observations with angular separations only.")
     return p.parse_args()
 
 
@@ -407,9 +429,21 @@ def main():
     np.savez(args.output_dir / "normalization.npz",
              param_min=param_min, param_max=param_max)
 
+    # Suffix output dir for angular-only models to avoid overwriting standard models
+    if args.only_angular:
+        args.output_dir = args.output_dir.parent / (args.output_dir.name + "_only_ang")
+
     # Build dataset
-    input_dim = INPUT_DIM_SUMMARY if args.summary_mode else INPUT_DIM_FULL
-    log.info(f"Mode: {'summary (distance+MUV)' if args.summary_mode else 'full (dx,dy,dz,MUV)'}  input_dim={input_dim}")
+    if args.summary_mode:
+        input_dim = INPUT_DIM_SUMMARY
+        mode_str  = "summary (distance+MUV)"
+    elif args.only_angular:
+        input_dim = INPUT_DIM_ANGULAR
+        mode_str  = "angular (dx,dy,MUV)"
+    else:
+        input_dim = INPUT_DIM_FULL
+        mode_str  = "full (dx,dy,dz,MUV)"
+    log.info(f"Mode: {mode_str}  input_dim={input_dim}")
 
     dataset = NREDataset(
         database_dirs    = db_dirs,
@@ -418,6 +452,7 @@ def main():
         augment          = True,
         max_per_catalog  = args.max_per_catalog,
         summary_mode     = args.summary_mode,
+        only_angular     = args.only_angular,
     )
 
     n_val   = int(len(dataset) * args.val_frac)
@@ -488,7 +523,8 @@ def main():
              hidden_dims=np.array(args.hidden_dims),
              dropout=args.dropout,
              input_dim=input_dim,
-             summary_mode=int(args.summary_mode))
+             summary_mode=int(args.summary_mode),
+             only_angular=int(args.only_angular))
 
     log.info(f"Training complete. Best val loss: {best_val_loss:.4f}")
     log.info(f"Model saved to: {args.output_dir}")
