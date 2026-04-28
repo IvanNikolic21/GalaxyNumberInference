@@ -109,13 +109,20 @@ def make_output_name(Muv_add: float, sigmaUV_a: float, sigmaUV_b: float) -> str:
 # Core: build environments for one catalog
 # ---------------------------------------------------------------------------
 
-# Global halo_coords — set once per worker process via Pool initializer
+# Globals — set once per worker process via Pool initializer.
+# The 2D KDTree is built on ALL halo (x,y) positions and reused across every
+# catalog processed by that worker, avoiding per-task tree construction which
+# is the main source of excessive memory usage under many workers.
 _halo_coords: np.ndarray = None
+_halo_tree_2d: KDTree    = None
 
 
 def _worker_init(halo_coords: np.ndarray):
-    global _halo_coords
-    _halo_coords = halo_coords
+    global _halo_coords, _halo_tree_2d
+    _halo_coords  = halo_coords
+    log.info("Worker init: building 2D KDTree on all halo (x,y) positions ...")
+    _halo_tree_2d = KDTree(halo_coords[:, :2])
+    log.info("  KDTree ready.")
 
 
 def process_one(
@@ -142,49 +149,52 @@ def process_one(
     # Load MUV for this parameter set (single realization, index 0)
     muvs = load_muv_catalog(cat_path, index=0)
 
-    # Build bright and faint pools
-    bright_cut = BRIGHT_LIMIT
-    faint_cut  = FAINT_LIMIT
-
-    bright_mask = muvs < bright_cut
-    faint_mask  = (muvs < faint_cut) & (muvs >= bright_cut)
+    # MUV masks — indices into _halo_coords / muvs
+    bright_mask = muvs < BRIGHT_LIMIT
+    faint_mask  = (muvs < FAINT_LIMIT) & (muvs >= BRIGHT_LIMIT)
 
     bright_coords_sel = _halo_coords[bright_mask]
-    faint_coords_sel  = _halo_coords[faint_mask]
-    faint_mags_sel    = muvs[faint_mask]
 
     half_side = cfg.search_box_mpc(REDSHIFT)
 
-    # Build KDTree of faint galaxies once — query with L∞ norm gives exact box search.
-    # When photo-z bounds are provided: 2D KDTree on (x,y) + manual z filter per bright galaxy.
-    if dz_lower is not None:
-        tree2d = KDTree(faint_coords_sel[:, :2])
-        candidate_lists = tree2d.query_ball_point(bright_coords_sel[:, :2], r=half_side, p=np.inf)
-        neighbor_lists = []
-        for bright_coord, candidates in zip(bright_coords_sel, candidate_lists):
-            if len(candidates) == 0:
-                neighbor_lists.append([])
-                continue
-            cands = np.array(candidates)
-            bz    = bright_coord[2]
-            z_ok  = (faint_coords_sel[cands, 2] >= bz - dz_lower) & \
-                    (faint_coords_sel[cands, 2] <= bz + dz_upper)
-            neighbor_lists.append(cands[z_ok].tolist())
-    else:
-        tree = KDTree(faint_coords_sel)
-        neighbor_lists = tree.query_ball_point(bright_coords_sel, r=half_side, p=np.inf)
+    # Z half-extents: asymmetric for photo-z, symmetric otherwise
+    hz_lo = dz_lower if dz_lower is not None else half_side
+    hz_hi = dz_upper if dz_upper is not None else half_side
+
+    # Query the shared 2D KDTree (built once at worker init) for all bright galaxies.
+    # This returns candidates from ALL halos; we filter by faint_mask + z below.
+    candidate_lists = _halo_tree_2d.query_ball_point(
+        bright_coords_sel[:, :2], r=half_side, p=np.inf
+    )
 
     # Collect environments
     all_coords = []   # list of (N_i, 4) arrays
     offsets    = [0]
 
-    for bright_coord, neighbors in zip(bright_coords_sel, neighbor_lists):
-        if len(neighbors) == 0:
+    for bright_coord, candidates in zip(bright_coords_sel, candidate_lists):
+        if len(candidates) == 0:
             offsets.append(offsets[-1])
             continue
 
-        faint_coords_box = faint_coords_sel[neighbors]
-        faint_mags_box   = faint_mags_sel[neighbors]
+        cands = np.asarray(candidates, dtype=np.intp)
+
+        # Keep only faint galaxies
+        cands = cands[faint_mask[cands]]
+        if len(cands) == 0:
+            offsets.append(offsets[-1])
+            continue
+
+        # Z filter (symmetric or photo-z asymmetric)
+        bz   = bright_coord[2]
+        z_ok = (_halo_coords[cands, 2] >= bz - hz_lo) & \
+               (_halo_coords[cands, 2] <= bz + hz_hi)
+        cands = cands[z_ok]
+        if len(cands) == 0:
+            offsets.append(offsets[-1])
+            continue
+
+        faint_coords_box = _halo_coords[cands]
+        faint_mags_box   = muvs[cands]
 
         # Stack (dx, dy, dz, MUV) relative to bright galaxy — float32 for storage efficiency
         env = np.column_stack([
