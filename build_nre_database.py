@@ -32,7 +32,7 @@ import h5py
 import numpy as np
 from astropy import units as u
 from astropy.cosmology import Planck18 as cosmo
-from scipy.spatial import KDTree
+from scipy.spatial import cKDTree
 
 from galaxy_neighbors import (
     AnalysisConfig,
@@ -109,20 +109,12 @@ def make_output_name(Muv_add: float, sigmaUV_a: float, sigmaUV_b: float) -> str:
 # Core: build environments for one catalog
 # ---------------------------------------------------------------------------
 
-# Globals — set once per worker process via Pool initializer.
-# The 2D KDTree is built on ALL halo (x,y) positions and reused across every
-# catalog processed by that worker, avoiding per-task tree construction which
-# is the main source of excessive memory usage under many workers.
+# Globals — set in the main process BEFORE Pool creation so that all worker
+# processes inherit them via fork + copy-on-write.  Workers never write to
+# these arrays, so the pages are never dirtied → truly shared memory with
+# zero per-worker duplication regardless of how many workers are used.
 _halo_coords: np.ndarray = None
-_halo_tree_2d: KDTree    = None
-
-
-def _worker_init(halo_coords: np.ndarray):
-    global _halo_coords, _halo_tree_2d
-    _halo_coords  = halo_coords
-    log.info("Worker init: building 2D KDTree on all halo (x,y) positions ...")
-    _halo_tree_2d = KDTree(halo_coords[:, :2])
-    log.info("  KDTree ready.")
+_halo_tree_2d: cKDTree   = None
 
 
 def process_one(
@@ -161,8 +153,8 @@ def process_one(
     hz_lo = dz_lower if dz_lower is not None else half_side
     hz_hi = dz_upper if dz_upper is not None else half_side
 
-    # Query the shared 2D KDTree (built once at worker init) for all bright galaxies.
-    # This returns candidates from ALL halos; we filter by faint_mask + z below.
+    # Query the shared 2D cKDTree (built once in main, inherited via fork) for all bright
+    # galaxies. Returns candidates from ALL halos; filtered by faint_mask + z below.
     candidate_lists = _halo_tree_2d.query_ball_point(
         bright_coords_sel[:, :2], r=half_side, p=np.inf
     )
@@ -249,6 +241,8 @@ def parse_args():
 # ---------------------------------------------------------------------------
 
 def main():
+    global _halo_coords, _halo_tree_2d
+
     args = parse_args()
 
     # Compute photo-z comoving bounds and auto-suffix output dir
@@ -276,10 +270,16 @@ def main():
     log.info(f"Parameter sets: {len(params)}")
     log.info(f"Output dir:     {args.output_dir}")
 
-    # Load halo catalog once — shared across all workers (read-only)
+    # Load halo catalog and build the shared spatial index — both set as globals
+    # BEFORE Pool creation so all worker processes inherit them via fork + COW.
+    # Workers only read these; pages are never dirtied → one copy in RAM total.
     log.info(f"Loading halo catalog: {HALO_CATALOG_PATH}")
-    halo_coords, _ = load_halo_catalog(HALO_CATALOG_PATH)
-    log.info(f"  {len(halo_coords)} halos")
+    _halo_coords, _ = load_halo_catalog(HALO_CATALOG_PATH)
+    log.info(f"  {len(_halo_coords)} halos")
+
+    log.info("Building shared 2D cKDTree on halo (x,y) positions ...")
+    _halo_tree_2d = cKDTree(_halo_coords[:, :2])
+    log.info("  cKDTree ready.")
 
     worker = partial(
         process_one,
@@ -292,14 +292,10 @@ def main():
     items = list(enumerate(zip(Muv_adds, sigmaUV_as, sigmaUV_bs)))
 
     if args.n_workers == 1:
-        # Single-worker: set global directly
-        _worker_init(halo_coords)
         for item in items:
             worker(item)
     else:
-        with Pool(args.n_workers,
-                  initializer=_worker_init,
-                  initargs=(halo_coords,)) as pool:
+        with Pool(args.n_workers) as pool:   # no initializer — globals already set
             pool.map(worker, items)
 
     log.info("All done.")
