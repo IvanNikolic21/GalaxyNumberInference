@@ -61,9 +61,15 @@ HALO_CATALOG_PATH = Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5")
 CATALOG_DIR       = Path("/lustre/astro/ivannik/catalogs_grid_prior")
 OUTPUT_DIR        = Path("/groups/astro/ivannik/projects/Neighbors/nre_database")
 
-BRIGHT_LIMIT = -21.5
-FAINT_LIMIT  = -18.5
-REDSHIFT     = 10.5
+BRIGHT_LIMIT      = -21.5
+FAINT_LIMIT       = -18.5
+REDSHIFT          = 10.5
+# Maximum faint neighbors stored per bright galaxy.
+# The NRE uses only the 10 closest, but we keep more so that the total-count
+# feature (n_total / 200) stays meaningful.  For photo-z databases the search
+# volume is huge (±170 Mpc in z for dz=0.5) and without this cap individual
+# environments can reach 10k–100k neighbors, producing multi-GB .npz files.
+MAX_ENV_NEIGHBORS = 200
 
 cfg = AnalysisConfig(
     bright_limits         = [BRIGHT_LIMIT],
@@ -138,8 +144,9 @@ def process_one(
 
     log.info(f"  [{i+1}/{n_total}] Processing: {cat_path.name}")
 
-    # Load MUV for this parameter set (single realization, index 0)
-    muvs = load_muv_catalog(cat_path, index=0)
+    # Load MUV for this parameter set (single realization, index 0).
+    # Force float32 to halve memory vs float64.
+    muvs = load_muv_catalog(cat_path, index=0).astype(np.float32, copy=False)
 
     # MUV masks — indices into _halo_coords / muvs
     bright_mask = muvs < BRIGHT_LIMIT
@@ -153,17 +160,15 @@ def process_one(
     hz_lo = dz_lower if dz_lower is not None else half_side
     hz_hi = dz_upper if dz_upper is not None else half_side
 
-    # Query the shared 2D cKDTree (built once in main, inherited via fork) for all bright
-    # galaxies. Returns candidates from ALL halos; filtered by faint_mask + z below.
-    candidate_lists = _halo_tree_2d.query_ball_point(
-        bright_coords_sel[:, :2], r=half_side, p=np.inf
-    )
-
-    # Collect environments
+    # Collect environments — query the shared cKDTree one bright galaxy at a time.
+    # Querying all at once would build a large candidate list (hundreds of MB) that
+    # Python's arena allocator never returns to the OS, causing memory to grow over
+    # many catalogs.  Per-galaxy queries are tiny and freed at each iteration.
     all_coords = []   # list of (N_i, 4) arrays
     offsets    = [0]
 
-    for bright_coord, candidates in zip(bright_coords_sel, candidate_lists):
+    for bright_coord in bright_coords_sel:
+        candidates = _halo_tree_2d.query_ball_point(bright_coord[:2], r=half_side, p=np.inf)
         if len(candidates) == 0:
             offsets.append(offsets[-1])
             continue
@@ -184,6 +189,16 @@ def process_one(
         if len(cands) == 0:
             offsets.append(offsets[-1])
             continue
+
+        # Keep only the closest MAX_ENV_NEIGHBORS by 2D projected distance.
+        # This caps file sizes and per-task memory regardless of how large the
+        # search volume is (critical for photo-z databases with wide z windows).
+        if len(cands) > MAX_ENV_NEIGHBORS:
+            dx2d = _halo_coords[cands, 0] - bright_coord[0]
+            dy2d = _halo_coords[cands, 1] - bright_coord[1]
+            d2d  = dx2d * dx2d + dy2d * dy2d   # squared — no sqrt needed for sort
+            order = np.argpartition(d2d, MAX_ENV_NEIGHBORS)[:MAX_ENV_NEIGHBORS]
+            cands = cands[order]
 
         faint_coords_box = _halo_coords[cands]
         faint_mags_box   = muvs[cands]
