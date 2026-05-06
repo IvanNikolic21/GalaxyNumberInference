@@ -175,7 +175,10 @@ class NREDataset(Dataset):
                     env = coords[offsets[i]:offsets[i+1]]
                     if len(env) == 0:
                         continue
-                    self.envs.append(env)
+                    # .copy() breaks the view reference to coords so the full
+                    # coords array (potentially hundreds of MB per file) can be
+                    # garbage-collected once we move to the next file.
+                    self.envs.append(env.copy())
                     self.params.append(params)
                     self.catalog_ids.append(cat_idx)
                     self.is_prior.append(db_idx > 0)
