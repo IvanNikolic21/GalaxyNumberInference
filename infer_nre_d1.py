@@ -28,6 +28,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 import corner
 
 logging.basicConfig(
@@ -39,6 +40,10 @@ log = logging.getLogger(__name__)
 
 N_PARAMS  = 3
 INPUT_DIM = 3 + N_PARAMS  # d1, MUV_nearest, n_neighbors + theta
+
+# Reference model parameters: (Muv_add, sigmaUV_a, sigmaUV_b)
+FIDUCIAL_PARAMS   = np.array([-0.8,   0.0,  0.3])
+STOCHASTIC_PARAMS = np.array([ 0.3,  -0.34, 0.6])
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +289,16 @@ def main():
         plot_density=False,
         fill_contours=True,
     )
+    corner.overplot_lines(fig, FIDUCIAL_PARAMS,   color='C1')
+    corner.overplot_lines(fig, STOCHASTIC_PARAMS, color='C0')
+
+    legend_handles = [
+        mlines.Line2D([], [], color='C1', lw=1.5, label='increased luminosity'),
+        mlines.Line2D([], [], color='C0', lw=1.5, label='increased stochasticity'),
+    ]
+    fig.legend(handles=legend_handles, loc='upper right', fontsize=11,
+               bbox_to_anchor=(1.0, 1.0))
+
     fig.suptitle(
         f"d1 NRE posterior — {len(summaries)} environment(s)  "
         f"({'MCMC' if not args.use_grid else 'grid'})",
