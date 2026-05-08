@@ -413,6 +413,45 @@ def halo_mass_rank(mhs_brightest_fiducial, mhs_brightest_stochier):
     plt.savefig('/groups/astro/ivannik/projects/Neighbors/halomass_properties_brightest.pdf', bbox_inches='tight')
 
 
+def cumulative_neighbors_with_radius(data_fid, data_stochier, bins, output_path=None):
+    """
+    Parameters
+    ----------
+    data_fid, data_stochier : ndarray, shape (n_galaxies, n_bins-1)
+        Per-galaxy radial histograms from catalog.radial_distribution().
+    bins : ndarray, shape (n_bins,)
+        Bin edges used when computing the histograms.
+    output_path : str or Path, optional
+        Where to save the PDF. Defaults to the standard Neighbors directory.
+    """
+    if output_path is None:
+        output_path = '/groups/astro/ivannik/projects/Neighbors/num_dens_with_distr.pdf'
+
+    r = 0.5 * (bins[1:] + bins[:-1])
+    cum_stoc = np.cumsum(data_stochier, axis=1)
+    cum_fid  = np.cumsum(data_fid,      axis=1)
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    ax.plot(r, np.mean(cum_stoc, axis=0), label='increased stochasticity', lw=3, color='#08519c')
+    ax.fill_between(r,
+                    np.percentile(cum_stoc, 16, axis=0),
+                    np.percentile(cum_stoc, 84, axis=0),
+                    alpha=0.5, color='#08519c')
+
+    ax.plot(r, np.mean(cum_fid, axis=0), label='intrinsically bright', lw=3, color='#fd8d3c')
+    ax.fill_between(r,
+                    np.percentile(cum_fid, 16, axis=0),
+                    np.percentile(cum_fid, 84, axis=0),
+                    alpha=0.5, color='#fd8d3c')
+
+    ax.set_xlabel(r'distance, $R_{\rm 3D}$ [cMpc]', fontsize=14)
+    ax.set_ylabel(r'N neighbors within $R_{\rm 3D}$', fontsize=14)
+    ax.tick_params(labelsize=14)
+    ax.legend()
+    fig.savefig(output_path, bbox_inches='tight')
+
+
 def intro_plot():
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
     ax1.plot(bin_centers, np.log10(LF), '-', label='intrinsically bright', color='#a63603', lw=2, alpha=0.7)
