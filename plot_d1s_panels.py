@@ -43,7 +43,7 @@ CACHE = {
         CACHE_ROOT / f"z{z}" / f"d1s_fiducial_real{n}.npz",
         CACHE_ROOT / f"z{z}" / f"d1s_stochastic_real{n}.npz",
     )
-    for z, n in [(8.0, 1), (10.5, 20), (12.0, 50), (14.0, 100)]
+    for z, n in [(8.0, 1), (10.5, 20), (12.0, 50), (14.0, 800)]
 }
 #N_REALIZATIONS = {8.0: 1, 10.5: 20, 12.0: 50, 14.0: 100}
 
