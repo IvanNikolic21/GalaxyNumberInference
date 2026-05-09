@@ -19,6 +19,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from scipy.stats import gaussian_kde
 
 from galaxy_neighbors import RedshiftConfig, AnalysisConfig, run_neighbor_analysis
 from galaxy_d1s import D1sConfig, load_or_compute_d1s, plot_d1s_grid
@@ -47,33 +48,33 @@ REDSHIFT_CONFIGS = {
     #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8.h5"),
     #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8.h5"),
     # ),
-    # 10.5: RedshiftConfig(
-    #     redshift=10.5,
-    #     halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"),
-    #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_save.h5"),
-    #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5"),
-    # ),
+    10.5: RedshiftConfig(
+        redshift=10.5,
+        halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"),
+        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_s.h5"),
+        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5"),
+    ),
     # 12.0: RedshiftConfig(
     #     redshift=12.0,
     #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/12.0000/HaloCatalog.h5"),
     #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z12.h5"),
     #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z12.h5"),
     # ),
-    14.0: RedshiftConfig(
-        redshift=14.0,
-        halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"),
-        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14p0_800.h5"),
-        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14p0_800.h5"),
-    ),
+    # 14.0: RedshiftConfig(
+    #     redshift=14.0,
+    #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"),
+    #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14p0_800.h5"),
+    #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14p0_800.h5"),
+    # ),
 }
 
 # Sensible default number of realizations per redshift, reflecting catalog sizes.
 # Used in the SLURM script comments and as documentation — override via CLI as needed.
 DEFAULT_REALIZATIONS = {
     # 8.0:  1,
-    # 10.5: 5,    # has named files (new_save / new3) rather than a large stack
+    10.5: 10,    # has named files (new_save / new3) rather than a large stack
     # 12.0: 50,
-    14.0: 800,
+    #14.0: 800,
 }
 
 AVAILABLE_REDSHIFTS = sorted(REDSHIFT_CONFIGS.keys())
@@ -228,6 +229,16 @@ def main():
         d1s_cfg=d1s_cfg, force_recompute=args.force_recompute,
     )
     log.info(f"Part 2 done in {time.perf_counter() - t0:.1f}s")
+
+    if z_cfg.redshift == 10.5:
+        _faint_key = "M18.5"
+        log.info(f"z=10.5  P(d1 > 3 cMpc)  [faint limit MUV < -18.5]")
+        for bkey in analysis_cfg.bright_names:
+            arr_fid  = d1s_fid[bkey][_faint_key]
+            arr_stoc = d1s_stoc[bkey][_faint_key]
+            p_fid  = gaussian_kde(arr_fid,  bw_method=d1s_cfg.bw_fid ).integrate_box_1d(3, float("inf")) if len(arr_fid)  > 1 else float("nan")
+            p_stoc = gaussian_kde(arr_stoc, bw_method=d1s_cfg.bw_stoc).integrate_box_1d(3, float("inf")) if len(arr_stoc) > 1 else float("nan")
+            log.info(f"  {bkey}:  fiducial={p_fid:.3f}  stochastic={p_stoc:.3f}")
 
     # ------------------------------------------------------------------
     # Part 3: plots
