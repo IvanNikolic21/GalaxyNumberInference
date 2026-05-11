@@ -48,18 +48,18 @@ REDSHIFT_CONFIGS = {
     #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8.h5"),
     #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8.h5"),
     # ),
-    10.5: RedshiftConfig(
-        redshift=10.5,
-        halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"),
-        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_s.h5"),
-        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5"),
-    ),
-    # 12.0: RedshiftConfig(
-    #     redshift=12.0,
-    #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/12.0000/HaloCatalog.h5"),
-    #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z12.h5"),
-    #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z12.h5"),
+    # 10.5: RedshiftConfig(
+    #     redshift=10.5,
+    #     halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"),
+    #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_s.h5"),
+    #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5"),
     # ),
+    12.0: RedshiftConfig(
+        redshift=12.0,
+        halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/12.0000/HaloCatalog.h5"),
+        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z12.h5"),
+        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z12.h5"),
+    ),
     # 14.0: RedshiftConfig(
     #     redshift=14.0,
     #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"),
@@ -72,8 +72,8 @@ REDSHIFT_CONFIGS = {
 # Used in the SLURM script comments and as documentation — override via CLI as needed.
 DEFAULT_REALIZATIONS = {
     # 8.0:  1,
-    10.5: 10,    # has named files (new_save / new3) rather than a large stack
-    # 12.0: 50,
+    #10.5: 10,    # has named files (new_save / new3) rather than a large stack
+    12.0: 200,
     #14.0: 800,
 }
 
