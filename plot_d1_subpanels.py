@@ -134,8 +134,17 @@ FKEY = "M18.5"
 
 for i, (z, zlab) in enumerate(zip(REDSHIFTS, Z_LABS)):
     fid_z, stoc_z = [load_d1s(p, cfg) for p in CACHE[z]]
-    plot_kde(ax, fid_z[BKEY][FKEY],  colors_fid[i],  label=zlab)
-    plot_kde(ax, stoc_z[BKEY][FKEY], colors_stoc[i])
+    if z==12:
+        BW_FID = 0.3
+        BW_STOC = 0.3
+    elif z==14:
+        BW_FID = 0.3
+        BW_STOC = 0.3
+    else:
+        BW_FID = 0.15
+        BW_STOC = 0.15
+    plot_kde(ax, fid_z[BKEY][FKEY],  colors_fid[i],  label=zlab, bw = BW_FID)
+    plot_kde(ax, stoc_z[BKEY][FKEY], colors_stoc[i], bw = BW_STOC)
 
 style_ax(ax, r"Varying $z$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$")
 
