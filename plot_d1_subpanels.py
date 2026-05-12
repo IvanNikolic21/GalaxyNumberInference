@@ -41,8 +41,8 @@ CACHE = {
             CACHE_ROOT / "z8.0"  / "d1s_stochastic_real1.npz"),
     10.5: (CACHE_ROOT / "z10.5" / "d1s_fiducial_real5.npz",
             CACHE_ROOT / "z10.5" / "d1s_stochastic_real5.npz"),
-    12.0: (CACHE_ROOT / "z12.0" / "d1s_fiducial_real50.npz",
-            CACHE_ROOT / "z12.0" / "d1s_stochastic_real50.npz"),
+    12.0: (CACHE_ROOT / "z12.0" / "d1s_fiducial_real200.npz",
+            CACHE_ROOT / "z12.0" / "d1s_stochastic_real200.npz"),
     14.0: (CACHE_ROOT / "z14.0" / "d1s_fiducial_real800.npz",
             CACHE_ROOT / "z14.0" / "d1s_stochastic_real800.npz"),
 }
