@@ -167,6 +167,12 @@ fig, axes = plt.subplots(1, 3, figsize=(13, 4), sharey=True)
 fig.subplots_adjust(wspace = 0.0,)
 for i, (ax, z, zlab) in enumerate(zip(axes, REDSHIFTS, Z_LABELS)):
     fid_z, stoc_z = [load_d1s(p, cfg) for p in CACHE[z]]
+    if z==12:
+        BW_FID = 0.3
+        BW_STOC = 0.3
+    elif z==14:
+        BW_FID = 0.3
+        BW_STOC = 0.3
     plot_kde(ax, fid_z[BRIGHT_KEY][FAINT_KEY],  COLOR_FID,  LABEL_FID,  BW_FID)
     plot_kde(ax, stoc_z[BRIGHT_KEY][FAINT_KEY], COLOR_STOC, LABEL_STOC, BW_STOC)
     style_ax(ax, zlab,
