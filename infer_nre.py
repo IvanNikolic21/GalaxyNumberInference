@@ -29,6 +29,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 import corner
 
 # ---------------------------------------------------------------------------
@@ -49,6 +50,10 @@ N_FEATURES_FULL   = 4
 N_FEATURES_SUMM   = 2
 N_FEATURES_ANG    = 3    # dx, dy, MUV (no dz)
 N_PARAMS          = 3
+
+# Reference model parameters: (Muv_add, sigmaUV_a, sigmaUV_b)
+FIDUCIAL_PARAMS   = np.array([-0.8,   0.0,  0.3])
+STOCHASTIC_PARAMS = np.array([ 0.3,  -0.34, 0.6])
 INPUT_DIM_FULL    = MAX_NEIGHBORS * N_FEATURES_FULL + 1 + N_PARAMS  # 44
 INPUT_DIM_SUMMARY = MAX_NEIGHBORS * N_FEATURES_SUMM + 1 + N_PARAMS  # 24
 
@@ -343,6 +348,16 @@ def main():
         plot_density=False,
         fill_contours=True,
     )
+    corner.overplot_lines(fig, FIDUCIAL_PARAMS,   color='C1')
+    corner.overplot_lines(fig, STOCHASTIC_PARAMS, color='C0')
+
+    legend_handles = [
+        mlines.Line2D([], [], color='C1', lw=1.5, label='increased luminosity'),
+        mlines.Line2D([], [], color='C0', lw=1.5, label='increased stochasticity'),
+    ]
+    fig.legend(handles=legend_handles, loc='upper right', fontsize=11,
+               bbox_to_anchor=(1.0, 1.0))
+
     fig.suptitle(
         f"NRE posterior — {len(env_tensors)} environment(s)  "
         f"({'MCMC' if not args.use_grid else 'grid'})",
