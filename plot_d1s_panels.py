@@ -58,7 +58,7 @@ plt.rcParams.update({
 
 COLOR_FID  = d1s_cfg.color_fid
 COLOR_STOC = d1s_cfg.color_stoc
-LABEL_FID  = d1s_cfg.label_fid
+LABEL_FID  = 'increased luminosity' #d1s_cfg.label_fid
 LABEL_STOC = d1s_cfg.label_stoc
 BW_FID     = d1s_cfg.bw_fid
 BW_STOC    = d1s_cfg.bw_stoc
