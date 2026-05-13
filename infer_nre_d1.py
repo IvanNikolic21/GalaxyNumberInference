@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+from uvlf import Mason15, Observations
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 import corner
@@ -113,6 +114,15 @@ def log_posterior(thetas, summaries, model, param_min, param_max):
     return log_post.numpy()
 
 
+def uvlf_log_likelihood(theta, mason15, muv_obs, phi_obs, sig_p, sig_m):
+    Muv_add, sigmaUV_a, sigmaUV_b = theta
+    muv_grid = np.linspace(-25, -13, 100)
+    phi_pred_grid = mason15.calculate_UVLF(Muv_add, sigmaUV_a, sigmaUV_b, Muv_grid=muv_grid)
+    phi_pred = np.interp(muv_obs, muv_grid, phi_pred_grid)
+    sigma = np.where(phi_pred >= phi_obs, sig_p, sig_m)
+    return -0.5 * np.sum(((phi_obs - phi_pred) / sigma) ** 2)
+
+
 # ---------------------------------------------------------------------------
 # Posterior sampling
 # ---------------------------------------------------------------------------
@@ -120,6 +130,7 @@ def log_posterior(thetas, summaries, model, param_min, param_max):
 def sample_posterior_mcmc(
     summaries, model, param_min, param_max,
     n_walkers=32, n_steps=2000, n_burn=500,
+    mason15=None, uvlf_obs=None,
 ):
     try:
         import emcee
@@ -129,7 +140,10 @@ def sample_posterior_mcmc(
     def log_prob(theta):
         if np.any(theta < param_min) or np.any(theta > param_max):
             return -np.inf
-        return float(log_posterior(theta[np.newaxis], summaries, model, param_min, param_max)[0])
+        lp = float(log_posterior(theta[np.newaxis], summaries, model, param_min, param_max)[0])
+        if mason15 is not None:
+            lp += uvlf_log_likelihood(theta, mason15, *uvlf_obs)
+        return lp
 
     center = (param_min + param_max) / 2
     scale  = (param_max - param_min) / 10
@@ -148,6 +162,7 @@ def sample_posterior_mcmc(
 
 def sample_posterior_grid(
     summaries, model, param_min, param_max, n_grid=50, n_samples=10000,
+    mason15=None, uvlf_obs=None,
 ):
     g0 = np.linspace(param_min[0], param_max[0], n_grid)
     g1 = np.linspace(param_min[1], param_max[1], n_grid)
@@ -163,6 +178,13 @@ def sample_posterior_grid(
         log_ratios[start:start+batch_size] = log_posterior(
             batch, summaries, model, param_min, param_max
         )
+
+    if mason15 is not None:
+        log.info("Adding UVLF log-likelihood to grid ...")
+        uvlf_lls = np.array([
+            uvlf_log_likelihood(p, mason15, *uvlf_obs) for p in grid_params
+        ])
+        log_ratios += uvlf_lls
 
     log_post = log_ratios - log_ratios.max()
     weights  = np.exp(log_post)
@@ -200,6 +222,8 @@ def parse_args():
     p.add_argument("--only-angular", action="store_true",
                    help="Use projected 2D distance sqrt(dx²+dy²). "
                         "Loaded from model_config.npz if not set.")
+    p.add_argument("--use-uvlf", action="store_true",
+                   help="Add UVLF log-likelihood (Mason15 + Donnan24 z=10) to the posterior.")
     return p.parse_args()
 
 
@@ -242,6 +266,17 @@ def main():
     else:
         true_params = np.array(args.truths) if args.truths is not None else None
 
+    # UVLF likelihood setup
+    mason15 = None
+    uvlf_obs = None
+    if args.use_uvlf:
+        log.info("Setting up UVLF likelihood (Mason15 + Donnan24 z=10) ...")
+        mason15 = Mason15(z=10.0)
+        obs = Observations(ang=False, uvlf=True)
+        muv_obs, phi_obs, (sig_p, sig_m) = obs.get_obs_uvlf_z10_Donnan24()
+        uvlf_obs = (muv_obs, phi_obs, sig_p, sig_m)
+        log.info("UVLF likelihood ready.")
+
     # Build d1 summaries
     summaries = []
     for i in range(len(obs_offs) - 1):
@@ -258,6 +293,7 @@ def main():
     if args.use_grid:
         samples = sample_posterior_grid(
             summaries, model, param_min, param_max, n_grid=args.n_grid,
+            mason15=mason15, uvlf_obs=uvlf_obs,
         )
     else:
         samples = sample_posterior_mcmc(
@@ -265,6 +301,7 @@ def main():
             n_walkers=args.n_walkers,
             n_steps=args.n_steps,
             n_burn=args.n_burn,
+            mason15=mason15, uvlf_obs=uvlf_obs,
         )
 
     # Corner plot
@@ -305,11 +342,12 @@ def main():
         fontsize=14, y=1.02,
     )
 
-    out = args.output_dir / f"corner_d1_N{len(summaries)}.pdf"
+    uvlf_tag = "_uvlf" if args.use_uvlf else ""
+    out = args.output_dir / f"corner_d1_N{len(summaries)}{uvlf_tag}.pdf"
     fig.savefig(out, bbox_inches="tight")
     log.info(f"Saved: {out}")
 
-    np.save(args.output_dir / f"posterior_samples_d1_N{len(summaries)}.npy", samples)
+    np.save(args.output_dir / f"posterior_samples_d1_N{len(summaries)}{uvlf_tag}.npy", samples)
     log.info("Samples saved.")
 
 
