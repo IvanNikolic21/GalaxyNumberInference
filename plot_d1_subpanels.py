@@ -179,7 +179,7 @@ for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlab
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx -0.05 , y0 - 0.04, 'intrinsically\nbright',
+    ax.text(x0 + 3*dx -0.05 , y0 - 0.04, 'increased\nluminosity',
             fontsize=12, transform=ax.transAxes)
 
     # Stochastic row
