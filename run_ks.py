@@ -22,7 +22,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from galaxy_neighbors import AnalysisConfig, RedshiftConfig, compute_bright_counts
+from astropy.cosmology import Planck18 as cosmo
+from astropy import units as u
+
+from galaxy_neighbors import AnalysisConfig, RedshiftConfig, compute_bright_counts, load_muv_catalog
 from galaxy_d1s import load_d1s
 from galaxy_ks import KSConfig, run_ks_analysis, plot_ks_results, plot_ks_summary_bars, summarise_ks
 
@@ -85,6 +88,66 @@ cfg = AnalysisConfig(
     preselect_faint_limit = -16.5,
     survey_area_arcmin2   = 12.24,
 )
+
+
+# ---------------------------------------------------------------------------
+# UVLF from catalog + required survey area
+# ---------------------------------------------------------------------------
+_UVLF_BIN_EDGES = np.arange(-25.5, -9.5, 0.5)          # mag, half-integer edges
+_UVLF_DMUV      = float(_UVLF_BIN_EDGES[1] - _UVLF_BIN_EDGES[0])
+_BOX_LEN_MPC    = 512.0
+
+
+def get_LF(Muv, n_realizations=1, BOX_LEN=_BOX_LEN_MPC):
+    """UV luminosity function from a stacked catalog.
+
+    Muv : concatenated MUV array across n_realizations catalogs
+    n_realizations : scales the effective volume (n_realizations × BOX_LEN³)
+    BOX_LEN : simulation box side in Mpc
+
+    Returns bin_centers [mag] and phi [Mpc⁻³ mag⁻¹].
+    """
+    hist, _ = np.histogram(Muv, bins=_UVLF_BIN_EDGES)
+    ndens = hist / (n_realizations * BOX_LEN**3) / _UVLF_DMUV
+    bin_centers = 0.5 * (_UVLF_BIN_EDGES[:-1] + _UVLF_BIN_EDGES[1:])
+    return bin_centers, ndens
+
+
+def compute_required_survey_area(
+    n_pointings: np.ndarray,
+    bin_centers: np.ndarray,
+    phi: np.ndarray,
+    bright_limit: float,
+    redshift: float,
+    delta_z: float = 1.0,
+) -> np.ndarray:
+    """Survey area [arcmin²] needed to observe n_pointings bright galaxies.
+
+    Integrates the UVLF brighter than bright_limit to get the comoving number
+    density, then converts to a projected surface density via the volume element
+    dV/dΩ/dz × Δz.  Area = N_pointings / surface_density.
+
+    n_pointings : bootstrap distribution of critical sample sizes (may have NaN)
+    bin_centers : UVLF magnitude bin centers [mag]
+    phi : UVLF [Mpc⁻³ mag⁻¹]
+    bright_limit : galaxies with M_UV < bright_limit are counted
+    redshift : central redshift of the survey slice
+    delta_z : redshift slice width (default 1.0)
+    """
+    bright_mask = bin_centers < bright_limit
+    if not bright_mask.any():
+        return np.full(len(n_pointings), np.nan)
+
+    n_bright = np.trapz(phi[bright_mask], bin_centers[bright_mask])  # Mpc⁻³
+
+    D_C = cosmo.comoving_distance(redshift).to(u.Mpc).value          # Mpc
+    H_z = cosmo.H(redshift).to(u.km / u.s / u.Mpc).value            # km/s/Mpc
+    dV_dOmega_dz = D_C**2 * (2.998e5 / H_z)                         # Mpc³ sr⁻¹
+
+    arcmin2_per_sr = (180.0 * 60.0 / np.pi) ** 2
+    n_surf = n_bright * dV_dOmega_dz * delta_z / arcmin2_per_sr      # arcmin⁻²
+
+    return n_pointings / n_surf                                       # arcmin²
 
 
 def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key):
@@ -155,6 +218,11 @@ def main():
     d1s_stoc = load_d1s(cache_stoc, cfg)
     log.info("Computing bright counts for p_neighbor correction ...")
     bright_counts = compute_bright_counts(z_cfg, cfg, n_realizations=N_REALIZATIONS[z])
+
+    log.info("Computing UVLF from fiducial catalog ...")
+    muvs_all = load_muv_catalog(z_cfg.muv_fiducial_path, n_realizations=N_REALIZATIONS[z])
+    uvlf_bins, uvlf_phi = get_LF(muvs_all, n_realizations=N_REALIZATIONS[z])
+    log.info(f"  UVLF computed: {N_REALIZATIONS[z]} realizations, BOX_LEN={_BOX_LEN_MPC} Mpc")
     for bkey, n in bright_counts.items():
         log.info(f"  {bkey}: {n} bright galaxies")
     plt.style.use("seaborn-v0_8-ticks")
@@ -163,7 +231,7 @@ def main():
         "xtick.direction": "in", "ytick.direction": "in",
     })
 
-    for bright_key in cfg.bright_names:
+    for bright_limit, bright_key in zip(cfg.bright_limits, cfg.bright_names):
         log.info(f"Running KS/AD analysis: bright_key={bright_key} ...")
         t0 = time.perf_counter()
         sig_str = str(args.significance).replace(".", "p")
@@ -191,6 +259,17 @@ def main():
         print(f"\n{'='*68}")
         print(f"bright_key={bright_key}  z={z}")
         print(summarise_ks(results, ks_cfg))
+
+        pct = ks_cfg.summary_percentile
+        print(f"\nRequired survey area  (bright_key={bright_key}, z={z}, Δz=1.0, BOX_LEN={_BOX_LEN_MPC} Mpc)")
+        print(f"  {'faint_key':<12}  {'N_point med':>11}  {'Area med [arcmin²]':>20}  {'Area p'+str(int(pct))+' [arcmin²]':>20}")
+        print(f"  {'-'*67}")
+        for fkey in cfg.faint_names:
+            n_pt   = results_corrected[fkey]['ks']
+            areas  = compute_required_survey_area(n_pt, uvlf_bins, uvlf_phi, bright_limit, z)
+            print(f"  {fkey:<12}  {np.nanmedian(n_pt):>11.1f}  "
+                  f"{np.nanmedian(areas):>20.1f}  "
+                  f"{np.nanpercentile(areas, pct):>20.1f}")
 
         fig = plot_ks_results(
             results_corrected, ks_cfg, bright_key=bright_key, redshift_label=z,
