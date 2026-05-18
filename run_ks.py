@@ -220,7 +220,7 @@ def main():
     bright_counts = compute_bright_counts(z_cfg, cfg, n_realizations=N_REALIZATIONS[z])
 
     log.info("Computing UVLF from fiducial catalog ...")
-    muvs_all = load_muv_catalog(z_cfg.muv_fiducial_path, n_realizations=N_REALIZATIONS[z])
+    muvs_all = load_muv_catalog(z_cfg.muv_fiducial_path, index=None, n_realizations=N_REALIZATIONS[z])
     uvlf_bins, uvlf_phi = get_LF(muvs_all, n_realizations=N_REALIZATIONS[z])
     log.info(f"  UVLF computed: {N_REALIZATIONS[z]} realizations, BOX_LEN={_BOX_LEN_MPC} Mpc")
     for bkey, n in bright_counts.items():
