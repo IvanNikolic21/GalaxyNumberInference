@@ -32,21 +32,21 @@ REDSHIFT_CONFIGS = {
     #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/8.0000/HaloCatalog.h5"),
     #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8.h5"),
     #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8.h5")),
-    # 10.5: RedshiftConfig(redshift=10.5,
-    #     halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"),
-    #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_save.h5"),
-    #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5")),
+    10.5: RedshiftConfig(redshift=10.5,
+        halo_catalog_path=Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5"),
+        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_new_s100.h5"),
+        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_new3.h5")),
     12.0: RedshiftConfig(redshift=12.0,
         halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/12.0000/HaloCatalog.h5"),
-        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z12.h5"),
+        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z12_ns.h5"),
         muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z12.h5")),
-    14.0: RedshiftConfig(redshift=14.0,
-        halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"),
-        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14p0_800.h5"),
-        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14p0_800.h5")),
+    # 14.0: RedshiftConfig(redshift=14.0,
+    #     halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"),
+    #     muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14p0_800.h5"),
+    #     muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14p0_800.h5")),
 }
 
-N_REALIZATIONS = {12.0: 50, 14.0: 800}
+N_REALIZATIONS = {10.5:100, 12.0: 100}#, 14.0: 200}
 
 CACHE_ROOT  = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 KS_ROOT     = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
@@ -55,9 +55,9 @@ OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 D1S_FILES = {
     # 8.0: CACHE_ROOT / "z8.0" / "d1s_fiducial_real1.npz",
-    # 10.5: CACHE_ROOT / "z10.5" / "d1s_fiducial_real20.npz",
-    12.0: CACHE_ROOT / "z12.0" / "d1s_fiducial_real50.npz",
-    14.0: CACHE_ROOT / "z14.0" / "d1s_fiducial_real800.npz",
+    10.5: CACHE_ROOT / "z10.5" / "d1s_fiducial_real20.npz",
+    12.0: CACHE_ROOT / "z12.0" / "d1s_fiducial_real100.npz",
+    #14.0: CACHE_ROOT / "z14.0" / "d1s_fiducial_real800.npz",
 }
 
 muv_lim = np.array(cfg.faint_limits)
