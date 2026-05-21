@@ -179,7 +179,7 @@ for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlab
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx -0.05 , y0 - 0.04, 'increased\nluminosity',
+    ax.text(x0 + 3*dx -0.05 , y0 - 0.04, 'high\nluminosity',
             fontsize=12, transform=ax.transAxes)
 
     # Stochastic row
@@ -189,7 +189,7 @@ for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlab
             transform=ax.transAxes, facecolor=c, edgecolor='none'
         )
         ax.add_patch(rect)
-    ax.text(x0 + 3*dx -0.05, y0 - 0.18, 'increased\nstochasticity',
+    ax.text(x0 + 3*dx -0.05, y0 - 0.18, 'high\nstochasticity',
             fontsize=12, transform=ax.transAxes)
 
     # Parameter value labels
