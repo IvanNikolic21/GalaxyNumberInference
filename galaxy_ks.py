@@ -92,8 +92,8 @@ def _bootstrap_trial(
     critical_ks, critical_ad : int or None
         Critical sample sizes for KS and AD respectively.
     """
-    pvalues_ks = np.zeros(max_sample)
-    pvalues_ad = np.zeros(max_sample)
+    pvalues_ks = np.ones(max_sample)
+    pvalues_ad = np.ones(max_sample)
 
     for i in range(3, max_sample):
         sample_fid  = rng.choice(arr_fid,  size=i, replace=True)
