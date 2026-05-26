@@ -58,7 +58,7 @@ colors_stoc = np.flip(['#2171b5', '#6baed6', '#bdd7e7'])
 # ---------------------------------------------------------------------------
 x = np.linspace(0, 8, 300)
 
-def plot_kde(ax, arr, color, label=None, lw=2.5, bw=0.15):
+def plot_kde(ax, arr, color, label=None, lw=2.5, bw=0.2):
     if len(arr) < 2:
         return
     try:
