@@ -150,9 +150,11 @@ def compute_required_survey_area(
     return n_pointings / n_surf                                       # arcmin²
 
 
-def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key):
+def (results, d1s_fid, bright_counts, bright_key, d1s_stoc=None):
     n_total = bright_counts[bright_key]
     corrected = {}
+    threshold_fid  = None
+    threshold_stoc = None
     for fkey in results:
         n_passed = len(d1s_fid[bright_key][fkey])
         p = n_passed / n_total if n_total > 0 else 1.0
@@ -166,6 +168,18 @@ def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key):
             'ad': results[fkey]['ad'] / p,
         }
         log.info(f"    {bright_key} | {fkey}: p_neighbor={p:.3f}  factor={1/p:.2f}")
+        if threshold_fid is None and p < 0.5:
+            threshold_fid = fkey
+        if d1s_stoc is not None:
+            p_stoc = len(d1s_stoc[bright_key][fkey]) / n_total if n_total > 0 else 1.0
+            if threshold_stoc is None and p_stoc < 0.5:
+                threshold_stoc = fkey
+    fid_str  = threshold_fid  if threshold_fid  is not None else "never (<16.5)"
+    stoc_str = threshold_stoc if threshold_stoc is not None else "never (<16.5)"
+    if d1s_stoc is not None:
+        log.info(f"  50%-empty threshold: {bright_key} | fid: {fid_str}  stoc: {stoc_str}")
+    else:
+        log.info(f"  50%-empty threshold: {bright_key} | fid: {fid_str}")
     return corrected
 
 
@@ -254,7 +268,7 @@ def main():
             np.savez(cache_path, **{f"{fkey}__{test}": results[fkey][test]
                                     for fkey in results
                                     for test in ['ks', 'ad']})
-        results_corrected = apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key)
+        results_corrected = apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key, d1s_stoc=d1s_stoc)
 
         print(f"\n{'='*68}")
         print(f"bright_key={bright_key}  z={z}")
