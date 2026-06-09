@@ -150,7 +150,7 @@ def compute_required_survey_area(
     return n_pointings / n_surf                                       # arcmin²
 
 
-def (results, d1s_fid, bright_counts, bright_key, d1s_stoc=None):
+def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key, d1s_stoc=None):
     n_total = bright_counts[bright_key]
     corrected = {}
     threshold_fid  = None
