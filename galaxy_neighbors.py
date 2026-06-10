@@ -453,6 +453,7 @@ def compute_bright_counts(
     analysis_cfg: AnalysisConfig,
     muv_index: int = 0,
     n_realizations: int | None = None,
+    use_stochastic: bool = False,
 ) -> dict[str, int]:
     """Count bright galaxies per bright limit threshold.
 
@@ -478,8 +479,9 @@ def compute_bright_counts(
 
     counts = {bkey: 0 for bkey in analysis_cfg.bright_names}
 
+    catalog_path = redshift_cfg.muv_stochastic_path if use_stochastic else redshift_cfg.muv_fiducial_path
     for idx in indices:
-        muvs = load_muv_catalog(redshift_cfg.muv_fiducial_path, index=idx)
+        muvs = load_muv_catalog(catalog_path, index=idx)
         for bright_limit, bkey in zip(analysis_cfg.bright_limits, analysis_cfg.bright_names):
             counts[bkey] += int((muvs < bright_limit).sum())
 

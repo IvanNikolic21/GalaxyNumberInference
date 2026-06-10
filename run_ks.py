@@ -150,8 +150,10 @@ def compute_required_survey_area(
     return n_pointings / n_surf                                       # arcmin²
 
 
-def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key, d1s_stoc=None):
-    n_total = bright_counts[bright_key]
+def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key,
+                                d1s_stoc=None, bright_counts_stoc=None):
+    n_total      = bright_counts[bright_key]
+    n_total_stoc = (bright_counts_stoc or bright_counts)[bright_key]
     corrected = {}
     threshold_fid  = None
     threshold_stoc = None
@@ -171,7 +173,7 @@ def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key, d1s
         if threshold_fid is None and p < 0.5:
             threshold_fid = fkey
         if d1s_stoc is not None:
-            p_stoc = len(d1s_stoc[bright_key][fkey]) / n_total if n_total > 0 else 1.0
+            p_stoc = len(d1s_stoc[bright_key][fkey]) / n_total_stoc if n_total_stoc > 0 else 1.0
             if threshold_stoc is None and p_stoc < 0.5:
                 threshold_stoc = fkey
     fid_str  = threshold_fid  if threshold_fid  is not None else "never (<16.5)"
@@ -231,7 +233,8 @@ def main():
     d1s_fid  = load_d1s(cache_fid,  cfg)
     d1s_stoc = load_d1s(cache_stoc, cfg)
     log.info("Computing bright counts for p_neighbor correction ...")
-    bright_counts = compute_bright_counts(z_cfg, cfg, n_realizations=N_REALIZATIONS[z])
+    bright_counts      = compute_bright_counts(z_cfg, cfg, n_realizations=N_REALIZATIONS[z])
+    bright_counts_stoc = compute_bright_counts(z_cfg, cfg, n_realizations=N_REALIZATIONS[z], use_stochastic=True)
 
     log.info("Computing UVLF from fiducial catalog ...")
     muvs_all = load_muv_catalog(z_cfg.muv_fiducial_path, index=None, n_realizations=N_REALIZATIONS[z])
@@ -268,7 +271,8 @@ def main():
             np.savez(cache_path, **{f"{fkey}__{test}": results[fkey][test]
                                     for fkey in results
                                     for test in ['ks', 'ad']})
-        results_corrected = apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key, d1s_stoc=d1s_stoc)
+        results_corrected = apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key,
+                                                         d1s_stoc=d1s_stoc, bright_counts_stoc=bright_counts_stoc)
 
         print(f"\n{'='*68}")
         print(f"bright_key={bright_key}  z={z}")
