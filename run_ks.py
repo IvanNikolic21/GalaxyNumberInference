@@ -169,13 +169,15 @@ def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key,
             'ks': results[fkey]['ks'] / p,
             'ad': results[fkey]['ad'] / p,
         }
-        log.info(f"    {bright_key} | {fkey}: p_neighbor={p:.3f}  factor={1/p:.2f}")
         if threshold_fid is None and p < 0.5:
             threshold_fid = fkey
         if d1s_stoc is not None:
             p_stoc = len(d1s_stoc[bright_key][fkey]) / n_total_stoc if n_total_stoc > 0 else 1.0
             if threshold_stoc is None and p_stoc < 0.5:
                 threshold_stoc = fkey
+            log.info(f"    {bright_key} | {fkey}: p_fid={p:.3f}  p_stoc={p_stoc:.3f}  factor={1/p:.2f}")
+        else:
+            log.info(f"    {bright_key} | {fkey}: p_neighbor={p:.3f}  factor={1/p:.2f}")
     fid_str  = threshold_fid  if threshold_fid  is not None else "never (<16.5)"
     stoc_str = threshold_stoc if threshold_stoc is not None else "never (<16.5)"
     if d1s_stoc is not None:
