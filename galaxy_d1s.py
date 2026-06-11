@@ -83,7 +83,7 @@ class D1sConfig:
         Legend label for the stochastic model.
     """
 
-    min_neighbors: int = 2
+    min_neighbors: int = 1
     n_bins: int = 5
     plot_d_max: float = 8.0
     bw_fid: float = 0.18
