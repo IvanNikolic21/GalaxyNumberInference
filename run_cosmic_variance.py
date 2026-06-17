@@ -90,6 +90,11 @@ def parse_args():
         help="Number of pointings per bootstrap survey draw.",
     )
     p.add_argument(
+        "--fov-area-arcmin2", type=float, default=PointingConfig().fov_area_arcmin2,
+        help="On-sky area of one pointing [arcmin^2]. Default: NIRCam's two "
+             "modules combined (~9.7). Use ~4.84 for a single module.",
+    )
+    p.add_argument(
         "--force-recompute", action="store_true",
         help="Ignore existing cache and recompute from scratch.",
     )
@@ -139,11 +144,13 @@ def main():
     cfg = PointingConfig(
         group_size=args.group_size,
         n_trials=args.n_trials,
+        fov_area_arcmin2=args.fov_area_arcmin2,
     )
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}.npz"
-    plot_path = OUTPUT_DIR / f"sigma_cv2_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}.pdf"
+    fov_tag = f"fov{args.fov_area_arcmin2:g}"
+    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.npz"
+    plot_path = OUTPUT_DIR / f"sigma_cv2_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.pdf"
 
     expected_models = {"fiducial", "stochastic"}
 
@@ -163,7 +170,7 @@ def main():
     halo_coords, _ = load_halo_catalog(z_cfg.halo_catalog_path)
     log.info(f"  {len(halo_coords)} halos with M > 0")
 
-    footprint_side = footprint_side_mpc(BOX_REDSHIFT, cfg.fov_arcmin)
+    footprint_side = footprint_side_mpc(BOX_REDSHIFT, cfg.fov_area_arcmin2)
     log.info(f"NIRCam footprint side at z={BOX_REDSHIFT}: {footprint_side:.3f} Mpc")
 
     muv_paths = {

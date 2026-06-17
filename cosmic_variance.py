@@ -37,7 +37,7 @@ Usage
 
     depth_request = comoving_depth_mpc(9.2, 10.9)
     depth, truncated = effective_los_depth(depth_request, cfg.box_len_mpc)
-    side = footprint_side_mpc(z_cfg.redshift, cfg.fov_arcmin)
+    side = footprint_side_mpc(z_cfg.redshift, cfg.fov_area_arcmin2)
 
     pool = build_pointing_pool(halo_coords, z_cfg.muv_fiducial_path, 100, cfg, depth, side)
     means, varis = bootstrap_group_stats(pool, cfg)
@@ -80,8 +80,13 @@ class PointingConfig:
     box_len_mpc : float
         Comoving side length of the simulation box. Default: 512.0
         (matches `_BOX_LEN_MPC` in run_ks.py).
-    fov_arcmin : float
-        Side length of the (square) NIRCam footprint on the sky. Default: 2.2.
+    fov_area_arcmin2 : float
+        On-sky area of the (square-footprint approximation of the) NIRCam
+        pointing, in arcmin^2. Default: 9.7, the combined area of NIRCam's
+        two modules (each ~2.2x2.2 arcmin => ~4.84 arcmin^2; ~9.7 arcmin^2
+        total for both modules, as used per-pointing in wide pure-parallel
+        surveys like PANORAMIC). Same area-based convention as
+        `AnalysisConfig.survey_area_arcmin2` in galaxy_neighbors.py.
     thresholds : list of float
         MUV thresholds; a galaxy counts if M_UV < threshold.
     group_size : int
@@ -97,7 +102,7 @@ class PointingConfig:
     """
 
     box_len_mpc: float = 512.0
-    fov_arcmin: float = 2.2
+    fov_area_arcmin2: float = 9.7
     thresholds: List[float] = field(default_factory=lambda: [-19.5, -20.0, -20.5])
     group_size: int = 28
     n_trials: int = 2000
@@ -120,14 +125,16 @@ def comoving_depth_mpc(z_lo: float, z_hi: float) -> float:
     return d_hi - d_lo
 
 
-def footprint_side_mpc(z_eval: float, fov_arcmin: float) -> float:
-    """Comoving transverse side [Mpc] of a square footprint of side `fov_arcmin`.
+def footprint_side_mpc(z_eval: float, fov_area_arcmin2: float) -> float:
+    """Comoving transverse side [Mpc] of a square footprint of area `fov_area_arcmin2`.
 
     Evaluated at a single redshift (the box's own snapshot redshift, by
-    convention) — same arcmin-to-Mpc conversion already used by
+    convention) — same arcmin-to-Mpc conversion, and the same
+    area-then-sqrt convention, already used by
     `AnalysisConfig.search_box_mpc` elsewhere in this codebase.
     """
-    return (fov_arcmin * u.arcmin * cosmo.kpc_comoving_per_arcmin(z_eval).to(u.Mpc / u.arcmin)).value
+    side_arcmin = np.sqrt(fov_area_arcmin2)
+    return (side_arcmin * u.arcmin * cosmo.kpc_comoving_per_arcmin(z_eval).to(u.Mpc / u.arcmin)).value
 
 
 def effective_los_depth(depth_requested: float, box_len_mpc: float) -> tuple[float, bool]:
@@ -294,6 +301,13 @@ def bootstrap_fractional_cosmic_variance(pool: np.ndarray, cfg: PointingConfig) 
     bar), while `fractional_cosmic_variance(*pool_moments(pool))` gives the
     precise point estimate from the full pool.
 
+    A trial where a threshold's group has zero counts (<N>=0, e.g. a rare,
+    bright threshold across only `group_size` pointings) leaves sigma_CV^2
+    undefined for that trial (0/0) — those entries are set to NaN rather
+    than silently propagating a 0/0 warning. Use `np.nanmedian` /
+    `np.nanpercentile` downstream so a handful of empty-group trials don't
+    blank out the whole threshold.
+
     Returns
     -------
     sigma_cv2 : np.ndarray, shape (cfg.n_trials, n_thresholds)
@@ -314,7 +328,19 @@ def bootstrap_fractional_cosmic_variance(pool: np.ndarray, cfg: PointingConfig) 
         m = sample.mean(axis=0)
         msq = (sample ** 2).mean(axis=0)
         var_cosmic = np.clip(msq - m ** 2 - m, 0, None)
-        sigma_cv2[t] = var_cosmic / m ** 2
+        m_sq = m ** 2
+        out = np.full(n_thresholds, np.nan)
+        np.divide(var_cosmic, m_sq, out=out, where=m_sq > 0)
+        sigma_cv2[t] = out
+
+    n_nan = np.isnan(sigma_cv2).sum(axis=0)
+    for k, frac in enumerate((n_nan / cfg.n_trials)):
+        if frac > 0:
+            log.warning(
+                f"threshold index {k}: {frac:.1%} of bootstrap trials had zero "
+                f"counts in the group (NaN sigma_CV^2) — likely too rare a "
+                f"threshold for group_size={cfg.group_size}."
+            )
 
     return sigma_cv2
 
@@ -539,8 +565,8 @@ def plot_fractional_cosmic_variance(
     for model, by_zrange in results.items():
         for zrange_label, values in by_zrange.items():
             _, _, _, _, sigma_cv2_trials = values
-            med = np.median(sigma_cv2_trials, axis=0)
-            lo, hi = np.percentile(sigma_cv2_trials, [16, 84], axis=0)
+            med = np.nanmedian(sigma_cv2_trials, axis=0)
+            lo, hi = np.nanpercentile(sigma_cv2_trials, [16, 84], axis=0)
             zlo, zhi = z_ranges[zrange_label]
             color = _ZRANGE_SHADE[model][zrange_label]
             offset = _ZRANGE_X_OFFSET.get(zrange_label, 0.0)
