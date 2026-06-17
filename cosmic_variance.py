@@ -534,12 +534,32 @@ _ZRANGE_SHADE = {
 _MODEL_LABEL = {"fiducial": "intrinsically bright", "stochastic": "increased stochasticity"}
 _ZRANGE_X_OFFSET = {"z9p2_10p9": -0.04, "z8p6_11p3": 0.04}
 
+# Weibel et al. 2025 (PANORAMIC z~10 cosmic variance paper, arXiv:2512.14212),
+# sigma_CV^2 (their Eq. 4 — note the paper's prose drops the superscript,
+# calling it "sigma_CV", but the quantity reported is sigma_CV^2) for a
+# 9.7 arcmin^2 NIRCam pointing, 9.2<z<10.9, at M_UV<-19.5,-20,-20.5.
+PANORAMIC_SIGMA_CV2 = {
+    "PANORAMIC data (MCMC)": {
+        "values": [0.96, 1.46, 1.71],
+        "lo": [0.96 - 0.18, 1.46 - 0.44, 1.71 - 0.59],
+        "hi": [0.96 + 0.20, 1.46 + 0.54, 1.71 + 0.72],
+        "color": "black", "marker": "*", "offset": -0.10,
+    },
+    "PANORAMIC data (bootstrap)": {
+        "values": [0.96, 1.76, 2.37],
+        "lo": [0.96 - 0.26, 1.76 - 0.43, 2.37 - 0.44],
+        "hi": [0.96 + 0.28, 1.76 + 0.50, 2.37 + 0.64],
+        "color": "dimgray", "marker": "x", "offset": 0.10,
+    },
+}
+
 
 def plot_fractional_cosmic_variance(
     results: dict[str, dict[str, tuple]],
     thresholds: List[float],
     z_ranges: dict[str, tuple[float, float]],
     figsize: tuple[float, float] = (7, 5),
+    reference: Optional[dict[str, dict]] = None,
 ) -> plt.Figure:
     """Errorbar plot of sigma_CV^2 vs M_UV threshold, both models, both z-ranges.
 
@@ -558,6 +578,12 @@ def plot_fractional_cosmic_variance(
         MUV thresholds, used for the x-axis.
     z_ranges : dict
         zrange_label -> (z_lo, z_hi), used for the legend labels.
+    reference : dict, optional
+        Literature comparison points to overlay, keyed by legend label. Each
+        value is a dict with keys "values", "lo", "hi" (arrays matching
+        `thresholds`), "color", "marker", and "offset" (x-axis nudge to avoid
+        overlapping markers). See `PANORAMIC_SIGMA_CV2` for a ready-made
+        example (Weibel et al. 2025, arXiv:2512.14212).
     """
     fig, ax = plt.subplots(figsize=figsize)
     x = np.array(thresholds)
@@ -575,6 +601,19 @@ def plot_fractional_cosmic_variance(
                 yerr=[med - lo, hi - med],
                 fmt='o', color=color, capsize=3, lw=2, markersize=6,
                 label=f"{_MODEL_LABEL[model]}, ${zlo}<z<{zhi}$",
+            )
+
+    if reference is not None:
+        for label, ref in reference.items():
+            values = np.array(ref["values"])
+            lo = np.array(ref["lo"])
+            hi = np.array(ref["hi"])
+            offset = ref.get("offset", 0.0)
+            ax.errorbar(
+                x + offset, values,
+                yerr=[values - lo, hi - values],
+                fmt=ref.get("marker", "s"), color=ref.get("color", "black"),
+                capsize=3, lw=2, markersize=8, label=label,
             )
 
     ax.set_xlabel(r"$M_{\rm UV}$ threshold", fontsize=14)
