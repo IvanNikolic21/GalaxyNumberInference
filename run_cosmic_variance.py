@@ -117,6 +117,21 @@ def _save_plot(results: dict, cfg: PointingConfig, plot_path: Path) -> None:
     log.info(f"Saved plot: {plot_path}")
 
 
+def _cache_is_complete(results: dict, expected_models: set[str]) -> bool:
+    """Reject caches written by an older schema (missing slots -> None) or a
+    partial run (missing model/z-range keys), so a stale .npz triggers a
+    recompute instead of crashing deep inside summarize_pool_moments."""
+    if set(results.keys()) != expected_models:
+        return False
+    for by_zrange in results.values():
+        if set(by_zrange.keys()) != set(Z_RANGES.keys()):
+            return False
+        for values in by_zrange.values():
+            if any(v is None for v in values):
+                return False
+    return True
+
+
 def main():
     args = parse_args()
     z_cfg = REDSHIFT_CONFIGS[BOX_REDSHIFT]
@@ -130,12 +145,19 @@ def main():
     cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}.npz"
     plot_path = OUTPUT_DIR / f"sigma_cv2_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}.pdf"
 
+    expected_models = {"fiducial", "stochastic"}
+
     if cache_path.exists() and not args.force_recompute:
         log.info(f"Cache found, loading: {cache_path}")
         results = load_cosmic_variance(cache_path)
-        _print_summaries(results, cfg)
-        _save_plot(results, cfg, plot_path)
-        return
+        if _cache_is_complete(results, expected_models):
+            _print_summaries(results, cfg)
+            _save_plot(results, cfg, plot_path)
+            return
+        log.warning(
+            f"Cache at {cache_path} is incomplete or from an older script version "
+            "(missing fields) — recomputing from scratch."
+        )
 
     log.info(f"Loading halo catalog: {z_cfg.halo_catalog_path}")
     halo_coords, _ = load_halo_catalog(z_cfg.halo_catalog_path)
