@@ -60,7 +60,7 @@ def main():
         results, cfg.thresholds, Z_RANGES, reference=PANORAMIC_SIGMA_CV,
     )
 
-    out_path = OUTPUT_DIR / f"sigma_cv_vs_panoramic_{fov_tag}.pdf"
+    out_path = OUTPUT_DIR / f"sigma_cv_vs_panoramic_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.pdf"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
     print(f"Saved: {out_path}")
