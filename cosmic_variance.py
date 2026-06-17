@@ -535,10 +535,14 @@ _MODEL_LABEL = {"fiducial": "intrinsically bright", "stochastic": "increased sto
 _ZRANGE_X_OFFSET = {"z9p2_10p9": -0.04, "z8p6_11p3": 0.04}
 
 # Weibel et al. 2025 (PANORAMIC z~10 cosmic variance paper, arXiv:2512.14212),
-# sigma_CV^2 (their Eq. 4 — note the paper's prose drops the superscript,
-# calling it "sigma_CV", but the quantity reported is sigma_CV^2) for a
-# 9.7 arcmin^2 NIRCam pointing, 9.2<z<10.9, at M_UV<-19.5,-20,-20.5.
-PANORAMIC_SIGMA_CV2 = {
+# sigma_CV = sqrt(sigma_CV^2 from their Eq. 4) for a 9.7 arcmin^2 NIRCam
+# pointing, 9.2<z<10.9, at M_UV<-19.5,-20,-20.5. Confirmed linear (not
+# squared) by their own bias relation b_g,CV = sigma_CV / sigma_DM (Eq. 2,
+# a ratio of rms quantities) and by their text: "sigma_CV = 1.71 ... fractional
+# uncertainty as high as ~110-240%" only works out (1.71-0.59=1.12 to
+# 1.71+0.72=2.43 -> 112%-243%) if sigma_CV itself is the fractional rms,
+# i.e. not squared.
+PANORAMIC_SIGMA_CV = {
     "PANORAMIC data (MCMC)": {
         "values": [0.96, 1.46, 1.71],
         "lo": [0.96 - 0.18, 1.46 - 0.44, 1.71 - 0.59],
@@ -551,6 +555,16 @@ PANORAMIC_SIGMA_CV2 = {
         "hi": [0.96 + 0.28, 1.76 + 0.50, 2.37 + 0.64],
         "color": "dimgray", "marker": "x", "offset": 0.10,
     },
+    # Read off Figure 1's green "UniverseMachine (fiducial)" points by pixel
+    # position (axis-tick-calibrated), since the paper doesn't give exact
+    # digits for these in the text — only "agrees well with our measurements".
+    # Approximate; re-extract from the source figure data if exact values matter.
+    "UniverseMachine (fiducial)": {
+        "values": [0.92, 1.19, 2.10],
+        "lo": [0.86, 1.06, 1.68],
+        "hi": [0.97, 1.31, 2.51],
+        "color": "yellowgreen", "marker": "o", "offset": 0.0,
+    },
 }
 
 
@@ -561,7 +575,15 @@ def plot_fractional_cosmic_variance(
     figsize: tuple[float, float] = (7, 5),
     reference: Optional[dict[str, dict]] = None,
 ) -> plt.Figure:
-    """Errorbar plot of sigma_CV^2 vs M_UV threshold, both models, both z-ranges.
+    """Errorbar plot of sigma_CV vs M_UV threshold, both models, both z-ranges.
+
+    Plots sigma_CV = sqrt(sigma_CV^2), matching the literature convention
+    (e.g. Robertson 2010, Somerville et al. 2004, Weibel et al. 2025's
+    b_g,CV = sigma_CV/sigma_DM) where sigma_CV itself is the fractional rms
+    — not the squared quantity computed internally by
+    `bootstrap_fractional_cosmic_variance`/`fractional_cosmic_variance`.
+    Percentiles commute with the (monotonic) sqrt, so taking the sqrt of the
+    median/16th/84th-percentile of sigma_CV^2 is exact, not an approximation.
 
     Central value per (model, z-range, threshold) is the median of the
     bootstrap sigma_CV^2 distribution (`bootstrap_fractional_cosmic_variance`);
@@ -578,12 +600,15 @@ def plot_fractional_cosmic_variance(
         MUV thresholds, used for the x-axis.
     z_ranges : dict
         zrange_label -> (z_lo, z_hi), used for the legend labels.
+    figsize : tuple of float
+        Figure size in inches, passed to `plt.subplots`.
     reference : dict, optional
-        Literature comparison points to overlay, keyed by legend label. Each
-        value is a dict with keys "values", "lo", "hi" (arrays matching
-        `thresholds`), "color", "marker", and "offset" (x-axis nudge to avoid
-        overlapping markers). See `PANORAMIC_SIGMA_CV2` for a ready-made
-        example (Weibel et al. 2025, arXiv:2512.14212).
+        Literature comparison points (already in sigma_CV, not squared) to
+        overlay, keyed by legend label. Each value is a dict with keys
+        "values", "lo", "hi" (arrays matching `thresholds`), "color",
+        "marker", and "offset" (x-axis nudge to avoid overlapping markers).
+        See `PANORAMIC_SIGMA_CV` for a ready-made example (Weibel et al.
+        2025, arXiv:2512.14212).
     """
     fig, ax = plt.subplots(figsize=figsize)
     x = np.array(thresholds)
@@ -591,8 +616,9 @@ def plot_fractional_cosmic_variance(
     for model, by_zrange in results.items():
         for zrange_label, values in by_zrange.items():
             _, _, _, _, sigma_cv2_trials = values
-            med = np.nanmedian(sigma_cv2_trials, axis=0)
-            lo, hi = np.nanpercentile(sigma_cv2_trials, [16, 84], axis=0)
+            med2 = np.nanmedian(sigma_cv2_trials, axis=0)
+            lo2, hi2 = np.nanpercentile(sigma_cv2_trials, [16, 84], axis=0)
+            med, lo, hi = np.sqrt(med2), np.sqrt(lo2), np.sqrt(hi2)
             zlo, zhi = z_ranges[zrange_label]
             color = _ZRANGE_SHADE[model][zrange_label]
             offset = _ZRANGE_X_OFFSET.get(zrange_label, 0.0)
@@ -617,7 +643,7 @@ def plot_fractional_cosmic_variance(
             )
 
     ax.set_xlabel(r"$M_{\rm UV}$ threshold", fontsize=14)
-    ax.set_ylabel(r"$\sigma_{\rm CV}^2$", fontsize=14)
+    ax.set_ylabel(r"$\sigma_{\rm CV}$", fontsize=14)
     ax.legend(fontsize=10)
     fig.tight_layout()
     return fig

@@ -150,7 +150,7 @@ def main():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fov_tag = f"fov{args.fov_area_arcmin2:g}"
     cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.npz"
-    plot_path = OUTPUT_DIR / f"sigma_cv2_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.pdf"
+    plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.pdf"
 
     expected_models = {"fiducial", "stochastic"}
 

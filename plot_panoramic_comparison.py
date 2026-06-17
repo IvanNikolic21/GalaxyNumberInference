@@ -2,13 +2,14 @@
 """
 plot_panoramic_comparison.py
 -----------------------------
-Plot our sigma_CV^2(M_UV) predictions against the PANORAMIC z~10 cosmic
+Plot our sigma_CV(M_UV) predictions against the PANORAMIC z~10 cosmic
 variance measurements (Weibel et al. 2025, arXiv:2512.14212), for a direct
 side-by-side comparison.
 
 Loads an existing cache from run_cosmic_variance.py (no recomputation) and
-overlays the paper's reported sigma_CV^2 values (PANORAMIC_SIGMA_CV2 in
-cosmic_variance.py) on the same axes.
+overlays the paper's reported sigma_CV values (PANORAMIC_SIGMA_CV in
+cosmic_variance.py) on the same axes. Both are sigma_CV = sqrt(sigma_CV^2),
+not the squared quantity — see the note in cosmic_variance.py for why.
 
 Usage
 -----
@@ -25,13 +26,13 @@ from cosmic_variance import (
     PointingConfig,
     load_cosmic_variance,
     plot_fractional_cosmic_variance,
-    PANORAMIC_SIGMA_CV2,
+    PANORAMIC_SIGMA_CV,
 )
 from run_cosmic_variance import CACHE_DIR, OUTPUT_DIR, Z_RANGES
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Plot our sigma_CV^2 vs PANORAMIC")
+    p = argparse.ArgumentParser(description="Plot our sigma_CV vs PANORAMIC")
     p.add_argument("--n-realizations", type=int, default=100)
     p.add_argument("--n-trials", type=int, default=2000)
     p.add_argument("--group-size", type=int, default=28)
@@ -56,10 +57,10 @@ def main():
 
     results = load_cosmic_variance(cache_path)
     fig = plot_fractional_cosmic_variance(
-        results, cfg.thresholds, Z_RANGES, reference=PANORAMIC_SIGMA_CV2,
+        results, cfg.thresholds, Z_RANGES, reference=PANORAMIC_SIGMA_CV,
     )
 
-    out_path = OUTPUT_DIR / f"sigma_cv2_vs_panoramic_{fov_tag}.pdf"
+    out_path = OUTPUT_DIR / f"sigma_cv_vs_panoramic_{fov_tag}.pdf"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
     print(f"Saved: {out_path}")
