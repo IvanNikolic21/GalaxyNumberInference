@@ -24,6 +24,7 @@ import argparse
 import logging
 from pathlib import Path
 
+import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 
@@ -42,6 +43,9 @@ from cosmic_variance import (
     plot_fractional_cosmic_variance,
     save_cosmic_variance,
     load_cosmic_variance,
+    GammaCVConfig,
+    fit_sigma_cv_mcmc,
+    summarize_gamma_fits,
 )
 from run_analysis import REDSHIFT_CONFIGS
 
@@ -98,12 +102,68 @@ def parse_args():
         "--force-recompute", action="store_true",
         help="Ignore existing cache and recompute from scratch.",
     )
+    p.add_argument(
+        "--gamma-fit-group-size", type=int, default=28,
+        help="Number of pointings in the realistic-survey-sized sample used "
+             "for the Gamma/Negative-Binomial MCMC sigma_CV fit (Weibel et al. "
+             "2025 Section 2.4.2 method). A second, larger-sample fit "
+             "(--gamma-fit-max-fullpool-size) is always also run, as a "
+             "precision cross-check.",
+    )
+    p.add_argument(
+        "--gamma-fit-max-fullpool-size", type=int, default=5000,
+        help="Cap on the precision-cross-check sample size for the Gamma/NB "
+             "fit (randomly subsampled from the pool if larger). Runtime "
+             "scales with this number, so keep it in the low thousands.",
+    )
+    p.add_argument(
+        "--skip-gamma-fit", action="store_true",
+        help="Skip the Gamma/NB MCMC fit (it requires the raw pool, so it's "
+             "always skipped anyway when loading from cache).",
+    )
     return p.parse_args()
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+def _run_gamma_fits(
+    pool, cfg: PointingConfig, gamma_group_size: int, seed: int = 0, max_fullpool_size: int = 5000,
+) -> tuple[dict, dict]:
+    """Gamma/NB MCMC fit on (a) one realistic-survey-sized draw, (b) a large precision-check sample.
+
+    The NB log-likelihood is evaluated over the full sample at every one of
+    `n_walkers * n_steps` MCMC steps, so runtime scales with sample size —
+    using the literal full pool (which can be ~1e5-1e6 pointings) would take
+    hours. `max_fullpool_size` caps the "precision cross-check" sample via a
+    random subsample, which is already far more than needed for a tight
+    posterior (a few thousand points is enough to pin down sigma_CV to ~1%,
+    per the n=1000 vs n=28 comparison already verified in development).
+
+    Returns
+    -------
+    fits_subsample, fits_fullpool : dict
+        threshold -> result dict from `fit_sigma_cv_mcmc`, for the
+        gamma_group_size-sized draw and the (possibly subsampled) larger
+        precision-check sample respectively.
+    """
+    rng = np.random.default_rng(seed)
+    n_pool = pool.shape[0]
+    idx = rng.choice(n_pool, size=min(gamma_group_size, n_pool), replace=False)
+    subsample = pool[idx]
+
+    fullpool_idx = rng.choice(n_pool, size=min(max_fullpool_size, n_pool), replace=False)
+    fullpool_sample = pool[fullpool_idx]
+
+    gamma_cfg = GammaCVConfig()
+    fits_subsample = {}
+    fits_fullpool = {}
+    for k, threshold in enumerate(cfg.thresholds):
+        fits_subsample[threshold] = fit_sigma_cv_mcmc(subsample[:, k], gamma_cfg)
+        fits_fullpool[threshold] = fit_sigma_cv_mcmc(fullpool_sample[:, k], gamma_cfg)
+    return fits_subsample, fits_fullpool
+
 
 def _print_summaries(results: dict, cfg: PointingConfig) -> None:
     for model, by_zrange in results.items():
@@ -160,6 +220,11 @@ def main():
         if _cache_is_complete(results, expected_models):
             _print_summaries(results, cfg)
             _save_plot(results, cfg, plot_path)
+            log.info(
+                "Skipping Gamma/NB MCMC fit: the cache only stores derived "
+                "statistics, not the raw pool it needs. Use --force-recompute "
+                "to get it."
+            )
             return
         log.warning(
             f"Cache at {cache_path} is incomplete or from an older script version "
@@ -200,6 +265,24 @@ def main():
             mean, mean_sq = pool_moments(pool)
             sigma_cv2_trials = bootstrap_fractional_cosmic_variance(pool, cfg)
             results[model][zrange_label] = (means, varis, mean, mean_sq, sigma_cv2_trials)
+
+            if not args.skip_gamma_fit:
+                fullpool_n = min(args.gamma_fit_max_fullpool_size, pool.shape[0])
+                log.info(
+                    f"  Gamma/NB MCMC fit: model={model}, "
+                    f"group_size={args.gamma_fit_group_size} + {fullpool_n}-pointing precision check ..."
+                )
+                fits_sub, fits_full = _run_gamma_fits(
+                    pool, cfg, args.gamma_fit_group_size,
+                    max_fullpool_size=args.gamma_fit_max_fullpool_size,
+                )
+                print(
+                    f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} "
+                    f"(one {args.gamma_fit_group_size}-pointing draw):"
+                )
+                print(summarize_gamma_fits(fits_sub, cfg.thresholds))
+                print(f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} ({fullpool_n}-pointing precision check):")
+                print(summarize_gamma_fits(fits_full, cfg.thresholds))
 
     _print_summaries(results, cfg)
     save_cosmic_variance(cache_path, results)

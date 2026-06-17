@@ -61,6 +61,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy import units as u
 from astropy.cosmology import Planck18 as cosmo
+from scipy.stats import nbinom
 
 from galaxy_neighbors import load_muv_catalog
 
@@ -460,6 +461,172 @@ def summarize_group_stats(
         lines.append(
             f"  {threshold:>8.2f}  {m_med:>10.2f}  [{m_lo:>6.2f}, {m_hi:>6.2f}]      "
             f"{v_med:>11.2f}  [{v_lo:>8.2f}, {v_hi:>8.2f}]"
+        )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Gamma / Negative-Binomial MCMC fit (Weibel et al. 2025, Section 2.4.2)
+# ---------------------------------------------------------------------------
+#
+# Per-field counts are modeled as Poisson draws on top of a Gamma-distributed
+# field-to-field rate (mean mu, variance mu^2 sigma_CV^2). Marginalizing the
+# Poisson over that Gamma rate analytically gives a Negative Binomial
+# likelihood for the observed counts, with
+#     Var(N) = E[Var(N|rate)] + Var(E[N|rate]) = mu + mu^2 sigma_CV^2,
+# i.e. exactly the sigma_CV^2 decomposition used everywhere else in this
+# module — but fit via a proper hierarchical likelihood instead of
+# method-of-moments on a (possibly small) sample. This avoids the
+# sigma_CV=0 floor that `bootstrap_fractional_cosmic_variance` can hit when
+# many small-N bootstrap draws land in the sub-Poisson (clipped) regime.
+
+@dataclass
+class GammaCVConfig:
+    """MCMC settings for the Gamma/Negative-Binomial sigma_CV fit.
+
+    Parameters
+    ----------
+    mean_prior_width_frac : float
+        Weak Gaussian prior on mu, centered on the sample mean, with std
+        equal to this fraction of the sample mean. Default: 0.3 (matches
+        Weibel et al. 2025).
+    log10_sigma_cv_bounds : tuple of float
+        Bounds on log10(sigma_CV) for the Jeffreys-equivalent prior
+        (p(sigma_CV) ~ 1/sigma_CV is flat in log-space; sampling uniformly
+        within these bounds implements that prior with a proper cutoff).
+    n_walkers, n_steps, n_burn : int
+        emcee.EnsembleSampler settings.
+    seed : int
+        RNG seed for walker initialization.
+    """
+
+    mean_prior_width_frac: float = 0.3
+    log10_sigma_cv_bounds: tuple[float, float] = (-3.0, 1.0)
+    n_walkers: int = 32
+    n_steps: int = 4000
+    n_burn: int = 1000
+    seed: int = 42
+
+
+def negbinom_params(mu: float, sigma_cv: float) -> tuple[float, float]:
+    """Convert (mu, sigma_CV) to the (n, p) parameterization of scipy.stats.nbinom.
+
+    Matches Var(N) = mu + mu^2 * sigma_CV^2: n = 1/sigma_CV^2, p = n/(n+mu).
+    As sigma_CV -> 0, n -> inf and the distribution -> Poisson(mu).
+    """
+    n = 1.0 / sigma_cv ** 2
+    p = n / (n + mu)
+    return n, p
+
+
+def negbinom_loglike(counts: np.ndarray, mu: float, sigma_cv: float) -> float:
+    """Negative-binomial log-likelihood of observed per-pointing `counts`."""
+    if mu <= 0 or sigma_cv <= 0:
+        return -np.inf
+    n, p = negbinom_params(mu, sigma_cv)
+    return float(np.sum(nbinom.logpmf(counts, n, p)))
+
+
+def _gamma_cv_log_prior(mu: float, sigma_cv: float, mean_obs: float, cfg: GammaCVConfig) -> float:
+    if mu <= 0 or sigma_cv <= 0:
+        return -np.inf
+    log10_sigma = np.log10(sigma_cv)
+    lo, hi = cfg.log10_sigma_cv_bounds
+    if not (lo <= log10_sigma <= hi):
+        return -np.inf
+    # Weak Gaussian prior on mu. The Jeffreys prior p(sigma_CV) ~ 1/sigma_CV
+    # is flat in log10(sigma_CV), already implemented by the uniform bounds
+    # check above (no extra log-density term needed for a flat prior).
+    mean_prior_std = cfg.mean_prior_width_frac * mean_obs
+    return -0.5 * ((mu - mean_obs) / mean_prior_std) ** 2
+
+
+def _gamma_cv_log_posterior(theta: np.ndarray, counts: np.ndarray, mean_obs: float, cfg: GammaCVConfig) -> float:
+    mu, sigma_cv = theta
+    lp = _gamma_cv_log_prior(mu, sigma_cv, mean_obs, cfg)
+    if not np.isfinite(lp):
+        return -np.inf
+    return lp + negbinom_loglike(counts, mu, sigma_cv)
+
+
+def fit_sigma_cv_mcmc(counts: np.ndarray, cfg: Optional[GammaCVConfig] = None) -> dict:
+    """Fit (mu, sigma_CV) to per-pointing `counts` via Gamma/NB MCMC (emcee).
+
+    Mirrors Weibel et al. 2025 Section 2.4.2: a single MCMC fit to the full
+    set of observed counts, rather than a method-of-moments estimate
+    bootstrapped over many small subsamples.
+
+    Parameters
+    ----------
+    counts : np.ndarray, shape (n_fields,)
+        Per-pointing galaxy counts for one MUV threshold (e.g. one column of
+        a `build_pointing_pool` pool, or a `group_size`-sized subsample of
+        it to emulate a realistic survey).
+    cfg : GammaCVConfig, optional
+
+    Returns
+    -------
+    result : dict
+        Keys: "mu_samples", "sigma_cv_samples" (flattened post-burn-in
+        chains), and "mu_median"/"mu_lo"/"mu_hi",
+        "sigma_cv_median"/"sigma_cv_lo"/"sigma_cv_hi" (16th/50th/84th
+        percentiles).
+    """
+    import emcee
+
+    if cfg is None:
+        cfg = GammaCVConfig()
+
+    counts = np.asarray(counts)
+    mean_obs = float(np.mean(counts))
+    rng = np.random.default_rng(cfg.seed)
+
+    # Initialize walkers near a method-of-moments estimate, jittered.
+    var_obs = float(np.var(counts, ddof=1))
+    mom_sigma_cv = np.sqrt(max((var_obs - mean_obs) / mean_obs ** 2, 1e-3))
+
+    p0 = np.empty((cfg.n_walkers, 2))
+    p0[:, 0] = mean_obs * (1 + 0.05 * rng.standard_normal(cfg.n_walkers))
+    p0[:, 1] = mom_sigma_cv * (1 + 0.2 * rng.standard_normal(cfg.n_walkers))
+    lo_bound, hi_bound = 10 ** cfg.log10_sigma_cv_bounds[0], 10 ** cfg.log10_sigma_cv_bounds[1]
+    p0[:, 1] = np.clip(p0[:, 1], lo_bound, hi_bound)
+    p0[:, 0] = np.clip(p0[:, 0], 1e-6, None)
+
+    sampler = emcee.EnsembleSampler(cfg.n_walkers, 2, _gamma_cv_log_posterior, args=(counts, mean_obs, cfg))
+    sampler.run_mcmc(p0, cfg.n_steps, progress=False)
+
+    chain = sampler.get_chain(discard=cfg.n_burn, flat=True)
+    mu_samples, sigma_cv_samples = chain[:, 0], chain[:, 1]
+
+    mu_lo, mu_med, mu_hi = np.percentile(mu_samples, [16, 50, 84])
+    s_lo, s_med, s_hi = np.percentile(sigma_cv_samples, [16, 50, 84])
+
+    return {
+        "mu_samples": mu_samples,
+        "sigma_cv_samples": sigma_cv_samples,
+        "mu_median": mu_med, "mu_lo": mu_lo, "mu_hi": mu_hi,
+        "sigma_cv_median": s_med, "sigma_cv_lo": s_lo, "sigma_cv_hi": s_hi,
+    }
+
+
+def summarize_gamma_fits(fits: dict[float, dict], thresholds: List[float]) -> str:
+    """Format a median + 16th/84th percentile table of Gamma/NB MCMC fits.
+
+    Parameters
+    ----------
+    fits : dict
+        threshold -> result dict from `fit_sigma_cv_mcmc`.
+    thresholds : list of float
+    """
+    lines = [f"  {'M_UV':>8}  {'mu med':>10}  {'mu 16-84':>18}  {'sigma_CV med':>13}  {'sigma_CV 16-84':>20}"]
+    lines.append(f"  {'-' * 78}")
+    for threshold in thresholds:
+        fit = fits[threshold]
+        lines.append(
+            f"  {threshold:>8.2f}  {fit['mu_median']:>10.3f}  "
+            f"[{fit['mu_lo']:>6.3f}, {fit['mu_hi']:>6.3f}]      "
+            f"{fit['sigma_cv_median']:>13.3f}  "
+            f"[{fit['sigma_cv_lo']:>8.3f}, {fit['sigma_cv_hi']:>8.3f}]"
         )
     return "\n".join(lines)
 

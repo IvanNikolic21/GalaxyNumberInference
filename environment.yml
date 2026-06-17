@@ -9,6 +9,7 @@ dependencies:
   - matplotlib
   - h5py
   - astropy
+  - emcee               # MCMC sampler for the Gamma/Negative-Binomial sigma_CV fit
   - jupyterlab          # optional: for running the demo notebook interactively
   - ipykernel           # registers the env as a Jupyter kernel
   - pip
