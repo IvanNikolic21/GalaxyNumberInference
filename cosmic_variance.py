@@ -42,6 +42,12 @@ Usage
     pool = build_pointing_pool(halo_coords, z_cfg.muv_fiducial_path, 100, cfg, depth, side)
     means, varis = bootstrap_group_stats(pool, cfg)
     print(summarize_group_stats(means, varis, cfg.thresholds))
+
+    sigma_cv2_trials = bootstrap_fractional_cosmic_variance(pool, cfg)
+    fig = plot_fractional_cosmic_variance(
+        {"fiducial": {"z9p2_10p9": (means, varis, *pool_moments(pool), sigma_cv2_trials)}},
+        cfg.thresholds, {"z9p2_10p9": (9.2, 10.9)},
+    )
 """
 
 from __future__ import annotations
@@ -49,8 +55,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
+import matplotlib.pyplot as plt
 import numpy as np
 from astropy import units as u
 from astropy.cosmology import Planck18 as cosmo
@@ -275,6 +282,139 @@ def bootstrap_group_stats(
     return means, varis
 
 
+def bootstrap_fractional_cosmic_variance(pool: np.ndarray, cfg: PointingConfig) -> np.ndarray:
+    """Bootstrap sigma_CV^2 (see `fractional_cosmic_variance`) over survey-sized groups.
+
+    Uses the same per-trial sampling as `bootstrap_group_stats` (group_size
+    distinct pointings, without replacement within a trial), but computes
+    <N> and <N^2> from each trial's own group rather than the full pool —
+    i.e. the estimate you'd actually get from one real `group_size`-pointing
+    survey. The spread of the returned distribution is the realistic
+    survey-to-survey uncertainty on sigma_CV^2 itself (suitable as an error
+    bar), while `fractional_cosmic_variance(*pool_moments(pool))` gives the
+    precise point estimate from the full pool.
+
+    Returns
+    -------
+    sigma_cv2 : np.ndarray, shape (cfg.n_trials, n_thresholds)
+    """
+    n_pool, n_thresholds = pool.shape
+    if cfg.group_size > n_pool:
+        raise ValueError(
+            f"group_size ({cfg.group_size}) exceeds pool size ({n_pool}) — "
+            "use more realizations or a smaller footprint."
+        )
+
+    rng = np.random.default_rng(cfg.seed)
+    sigma_cv2 = np.empty((cfg.n_trials, n_thresholds))
+
+    for t in range(cfg.n_trials):
+        idx = rng.choice(n_pool, size=cfg.group_size, replace=False)
+        sample = pool[idx]
+        m = sample.mean(axis=0)
+        msq = (sample ** 2).mean(axis=0)
+        var_cosmic = np.clip(msq - m ** 2 - m, 0, None)
+        sigma_cv2[t] = var_cosmic / m ** 2
+
+    return sigma_cv2
+
+
+def pool_moments(pool: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """First and second raw moments of counts per threshold, over the full pool.
+
+    Uses every independent pointing in `pool` (not a 28-pointing subsample),
+    so this is the most precise estimate of <N> and <N^2> for a single
+    NIRCam pointing.
+
+    Returns
+    -------
+    mean, mean_sq : np.ndarray, each shape (n_thresholds,)
+        <N> and <N^2>.
+    """
+    return pool.mean(axis=0), (pool ** 2).mean(axis=0)
+
+
+def poisson_cosmic_variance(
+    mean: np.ndarray,
+    mean_sq: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Decompose the per-pointing count variance into Poisson + cosmic terms.
+
+        Var_total   = <N^2> - <N>^2
+        Var_poisson = <N>                      (shot noise of a Poisson process)
+        Var_cosmic  = Var_total - Var_poisson   (excess variance from clustering)
+
+    Parameters
+    ----------
+    mean, mean_sq : np.ndarray, shape (n_thresholds,)
+        Output of `pool_moments`.
+
+    Returns
+    -------
+    var_total, var_poisson, var_cosmic : np.ndarray, each shape (n_thresholds,)
+        var_cosmic is clipped at 0 (sub-Poisson counts shouldn't happen for a
+        large enough pool, but small-sample noise can dip slightly negative).
+    """
+    var_total = mean_sq - mean ** 2
+    var_poisson = mean
+    var_cosmic = var_total - var_poisson
+    if np.any(var_cosmic < 0):
+        log.warning("Negative cosmic variance encountered (sub-Poisson counts) — clipping to 0.")
+        var_cosmic = np.clip(var_cosmic, 0, None)
+    return var_total, var_poisson, var_cosmic
+
+
+def fractional_cosmic_variance(mean: np.ndarray, mean_sq: np.ndarray) -> np.ndarray:
+    """Dimensionless cosmic variance, the standard literature quantity:
+
+        sigma_CV^2 = (sigma_total^2 - sigma_Poisson^2) / mu^2
+                   = (<N^2> - <N>^2 - <N>) / <N>^2
+
+    Same numerator as `poisson_cosmic_variance`'s var_cosmic, normalized by
+    mu^2 = <N>^2.
+    """
+    _, _, var_cosmic = poisson_cosmic_variance(mean, mean_sq)
+    return var_cosmic / mean ** 2
+
+
+def summarize_pool_moments(
+    mean: np.ndarray,
+    mean_sq: np.ndarray,
+    thresholds: List[float],
+    group_size: Optional[int] = None,
+) -> str:
+    """Format a <N>, <N^2>, and Poisson/cosmic variance table.
+
+    Includes both the absolute cosmic variance (Var_cv, in counts^2) and the
+    dimensionless sigma_CV^2 = Var_cv / <N>^2 (see `fractional_cosmic_variance`).
+    If `group_size` is given, also reports the variance of the *mean* over
+    a survey of that many independent pointings (Var_total / group_size),
+    split into its Poisson and cosmic parts — directly comparable to
+    `summarize_group_stats`'s bootstrap variance of the group mean.
+    """
+    var_total, var_poisson, var_cosmic = poisson_cosmic_variance(mean, mean_sq)
+    sigma_cv2 = var_cosmic / mean ** 2
+
+    header = (
+        f"  {'M_UV':>8}  {'<N>':>9}  {'<N^2>':>10}  {'Var_tot':>9}  {'Var_pois':>9}  "
+        f"{'Var_cv':>9}  {'sigma_CV^2':>11}"
+    )
+    if group_size is not None:
+        header += f"  {f'Var_tot/{group_size}':>12}  {f'Var_cv/{group_size}':>12}"
+    lines = [header, f"  {'-' * (len(header) - 2)}"]
+
+    for k, threshold in enumerate(thresholds):
+        line = (
+            f"  {threshold:>8.2f}  {mean[k]:>9.3f}  {mean_sq[k]:>10.3f}  "
+            f"{var_total[k]:>9.3f}  {var_poisson[k]:>9.3f}  {var_cosmic[k]:>9.3f}  "
+            f"{sigma_cv2[k]:>11.5f}"
+        )
+        if group_size is not None:
+            line += f"  {var_total[k] / group_size:>12.4f}  {var_cosmic[k] / group_size:>12.4f}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def summarize_group_stats(
     means: np.ndarray,
     varis: np.ndarray,
@@ -302,45 +442,117 @@ def summarize_group_stats(
 # Save / load (cache)
 # ---------------------------------------------------------------------------
 
+_CACHE_SLOTS = ("means", "varis", "mean", "mean_sq", "sigma_cv2_trials")
+
+
 def save_cosmic_variance(
     path: str | Path,
-    results: dict[str, dict[str, tuple[np.ndarray, np.ndarray]]],
+    results: dict[str, dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]],
 ) -> None:
-    """Save bootstrap results to a compressed numpy archive (.npz).
+    """Save bootstrap + moment results to a compressed numpy archive (.npz).
 
-    The flat key format is ``model__zrange_label__means`` /
-    ``model__zrange_label__varis``.
+    The flat key format is ``model__zrange_label__<slot>`` for slot in
+    ("means", "varis", "mean", "mean_sq", "sigma_cv2_trials").
 
     Parameters
     ----------
     path : str or Path
     results : dict
-        results[model][zrange_label] = (means, varis), each shape
-        (n_trials, n_thresholds).
+        results[model][zrange_label] = (means, varis, mean, mean_sq, sigma_cv2_trials):
+          means, varis : shape (n_trials, n_thresholds) — bootstrap group stats.
+          mean, mean_sq : shape (n_thresholds,) — <N>, <N^2> over the full pool.
+          sigma_cv2_trials : shape (n_trials, n_thresholds) — bootstrap sigma_CV^2.
     """
     path = Path(path)
     flat: dict[str, np.ndarray] = {}
     for model, by_zrange in results.items():
-        for zrange_label, (means, varis) in by_zrange.items():
-            flat[f"{model}__{zrange_label}__means"] = means
-            flat[f"{model}__{zrange_label}__varis"] = varis
+        for zrange_label, values in by_zrange.items():
+            for slot, arr in zip(_CACHE_SLOTS, values):
+                flat[f"{model}__{zrange_label}__{slot}"] = arr
     np.savez_compressed(path, **flat)
     print(f"Saved cosmic variance results → {path}.npz" if path.suffix != ".npz" else f"Saved cosmic variance results → {path}")
 
 
-def load_cosmic_variance(path: str | Path) -> dict[str, dict[str, tuple[np.ndarray, np.ndarray]]]:
-    """Load bootstrap results from a .npz cache file."""
+def load_cosmic_variance(
+    path: str | Path,
+) -> dict[str, dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]]:
+    """Load bootstrap + moment results from a .npz cache file."""
     path = Path(path)
     archive = np.load(path)
 
-    results: dict[str, dict[str, tuple[np.ndarray, np.ndarray]]] = {}
+    results: dict[str, dict[str, list]] = {}
     for flat_key in archive.files:
-        model, zrange_label, kind = flat_key.split("__")
-        results.setdefault(model, {}).setdefault(zrange_label, [None, None])
-        slot = 0 if kind == "means" else 1
-        results[model][zrange_label][slot] = archive[flat_key]
+        model, zrange_label, slot = flat_key.split("__")
+        results.setdefault(model, {}).setdefault(zrange_label, [None] * len(_CACHE_SLOTS))
+        results[model][zrange_label][_CACHE_SLOTS.index(slot)] = archive[flat_key]
 
     return {
-        model: {zr: tuple(pair) for zr, pair in by_zrange.items()}
+        model: {zr: tuple(values) for zr, values in by_zrange.items()}
         for model, by_zrange in results.items()
     }
+
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+# Same color convention as D1sConfig / plotter.py: fiducial=orange, stochastic=blue.
+# Within each model, the full-depth-coverage range gets the dark/primary shade
+# (matching D1sConfig.color_fid/color_stoc) and the truncated wide range gets a
+# lighter tint from the same family (matching the light-to-dark ramps used in
+# plot_d1_subpanels.py / plotter.CDF_all_gal_paper_version_split_by_N).
+_ZRANGE_SHADE = {
+    "fiducial":   {"z9p2_10p9": "#a63603", "z8p6_11p3": "#fd8d3c"},
+    "stochastic": {"z9p2_10p9": "#08519c", "z8p6_11p3": "#6baed6"},
+}
+_MODEL_LABEL = {"fiducial": "intrinsically bright", "stochastic": "increased stochasticity"}
+_ZRANGE_X_OFFSET = {"z9p2_10p9": -0.04, "z8p6_11p3": 0.04}
+
+
+def plot_fractional_cosmic_variance(
+    results: dict[str, dict[str, tuple]],
+    thresholds: List[float],
+    z_ranges: dict[str, tuple[float, float]],
+    figsize: tuple[float, float] = (7, 5),
+) -> plt.Figure:
+    """Errorbar plot of sigma_CV^2 vs M_UV threshold, both models, both z-ranges.
+
+    Central value per (model, z-range, threshold) is the median of the
+    bootstrap sigma_CV^2 distribution (`bootstrap_fractional_cosmic_variance`);
+    error bars are its 16th/84th percentiles — i.e. the realistic
+    survey-to-survey scatter on the cosmic-variance estimate itself for a
+    `group_size`-pointing survey.
+
+    Parameters
+    ----------
+    results : dict
+        results[model][zrange_label] = (means, varis, mean, mean_sq, sigma_cv2_trials),
+        as produced by run_cosmic_variance.py / save_cosmic_variance.
+    thresholds : list of float
+        MUV thresholds, used for the x-axis.
+    z_ranges : dict
+        zrange_label -> (z_lo, z_hi), used for the legend labels.
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    x = np.array(thresholds)
+
+    for model, by_zrange in results.items():
+        for zrange_label, values in by_zrange.items():
+            _, _, _, _, sigma_cv2_trials = values
+            med = np.median(sigma_cv2_trials, axis=0)
+            lo, hi = np.percentile(sigma_cv2_trials, [16, 84], axis=0)
+            zlo, zhi = z_ranges[zrange_label]
+            color = _ZRANGE_SHADE[model][zrange_label]
+            offset = _ZRANGE_X_OFFSET.get(zrange_label, 0.0)
+            ax.errorbar(
+                x + offset, med,
+                yerr=[med - lo, hi - med],
+                fmt='o', color=color, capsize=3, lw=2, markersize=6,
+                label=f"{_MODEL_LABEL[model]}, ${zlo}<z<{zhi}$",
+            )
+
+    ax.set_xlabel(r"$M_{\rm UV}$ threshold", fontsize=14)
+    ax.set_ylabel(r"$\sigma_{\rm CV}^2$", fontsize=14)
+    ax.legend(fontsize=10)
+    fig.tight_layout()
+    return fig

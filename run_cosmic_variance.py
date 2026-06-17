@@ -1,3 +1,5 @@
+
+
 #!/usr/bin/env python
 """
 run_cosmic_variance.py
@@ -22,6 +24,9 @@ import argparse
 import logging
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
+
 from galaxy_neighbors import load_halo_catalog
 from cosmic_variance import (
     PointingConfig,
@@ -30,7 +35,11 @@ from cosmic_variance import (
     effective_los_depth,
     build_pointing_pool,
     bootstrap_group_stats,
+    bootstrap_fractional_cosmic_variance,
     summarize_group_stats,
+    pool_moments,
+    summarize_pool_moments,
+    plot_fractional_cosmic_variance,
     save_cosmic_variance,
     load_cosmic_variance,
 )
@@ -57,6 +66,7 @@ Z_RANGES = {
 }
 
 CACHE_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cache/cosmic_variance")
+OUTPUT_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cosmic_variance_plots")
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -90,6 +100,23 @@ def parse_args():
 # Main
 # ---------------------------------------------------------------------------
 
+def _print_summaries(results: dict, cfg: PointingConfig) -> None:
+    for model, by_zrange in results.items():
+        for zrange_label, (means, varis, mean, mean_sq, sigma_cv2_trials) in by_zrange.items():
+            zlo, zhi = Z_RANGES[zrange_label]
+            print(f"\n{'=' * 78}\nmodel={model}  z-range=({zlo}, {zhi})  [{zrange_label}]")
+            print(summarize_group_stats(means, varis, cfg.thresholds))
+            print(f"\n  Per-pointing moments & Poisson/cosmic variance decomposition:")
+            print(summarize_pool_moments(mean, mean_sq, cfg.thresholds, group_size=cfg.group_size))
+
+
+def _save_plot(results: dict, cfg: PointingConfig, plot_path: Path) -> None:
+    fig = plot_fractional_cosmic_variance(results, cfg.thresholds, Z_RANGES)
+    plot_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(plot_path, bbox_inches="tight")
+    log.info(f"Saved plot: {plot_path}")
+
+
 def main():
     args = parse_args()
     z_cfg = REDSHIFT_CONFIGS[BOX_REDSHIFT]
@@ -101,15 +128,13 @@ def main():
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}.npz"
+    plot_path = OUTPUT_DIR / f"sigma_cv2_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}.pdf"
 
     if cache_path.exists() and not args.force_recompute:
         log.info(f"Cache found, loading: {cache_path}")
         results = load_cosmic_variance(cache_path)
-        for model, by_zrange in results.items():
-            for zrange_label, (means, varis) in by_zrange.items():
-                zlo, zhi = Z_RANGES[zrange_label]
-                print(f"\n{'=' * 78}\nmodel={model}  z-range=({zlo}, {zhi})  [{zrange_label}]")
-                print(summarize_group_stats(means, varis, cfg.thresholds))
+        _print_summaries(results, cfg)
+        _save_plot(results, cfg, plot_path)
         return
 
     log.info(f"Loading halo catalog: {z_cfg.halo_catalog_path}")
@@ -124,7 +149,7 @@ def main():
         "stochastic": z_cfg.muv_stochastic_path,
     }
 
-    results: dict[str, dict[str, tuple]] = {model: {} for model in muv_paths}
+    results: dict = {model: {} for model in muv_paths}
 
     for zrange_label, (zlo, zhi) in Z_RANGES.items():
         depth_requested = comoving_depth_mpc(zlo, zhi)
@@ -143,12 +168,13 @@ def main():
             log.info(f"    pool shape: {pool.shape}")
 
             means, varis = bootstrap_group_stats(pool, cfg)
-            results[model][zrange_label] = (means, varis)
+            mean, mean_sq = pool_moments(pool)
+            sigma_cv2_trials = bootstrap_fractional_cosmic_variance(pool, cfg)
+            results[model][zrange_label] = (means, varis, mean, mean_sq, sigma_cv2_trials)
 
-            print(f"\n{'=' * 78}\nmodel={model}  z-range=({zlo}, {zhi})  [{zrange_label}]")
-            print(summarize_group_stats(means, varis, cfg.thresholds))
-
+    _print_summaries(results, cfg)
     save_cosmic_variance(cache_path, results)
+    _save_plot(results, cfg, plot_path)
     log.info("All done.")
 
 
