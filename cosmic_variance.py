@@ -707,6 +707,33 @@ _MODEL_LABEL = {
 _MODEL_MARKER = {"fiducial": "o", "stochastic": "o", "prejwst": "^"}
 _ZRANGE_X_OFFSET = {"z9p2_10p9": -0.04, "z8p6_11p3": 0.04}
 
+
+def gamma_fit_to_reference(
+    model: str,
+    zlo: float,
+    zhi: float,
+    zrange_label: str,
+    fits: dict[float, dict],
+    thresholds: List[float],
+) -> tuple[str, dict]:
+    """Package a per-threshold Gamma/NB MCMC fit (`fit_sigma_cv_mcmc` results,
+    keyed by threshold) into the `reference` overlay format expected by
+    `plot_fractional_cosmic_variance`, reusing this module's color/marker/
+    offset conventions for `model` so it blends in with the bootstrap-based
+    series rather than looking like an unrelated literature point.
+    """
+    values = [fits[t]["sigma_cv_median"] for t in thresholds]
+    lo = [fits[t]["sigma_cv_lo"] for t in thresholds]
+    hi = [fits[t]["sigma_cv_hi"] for t in thresholds]
+    label = f"{_MODEL_LABEL.get(model, model)} (Gamma/NB), ${zlo}<z<{zhi}$"
+    entry = {
+        "values": values, "lo": lo, "hi": hi,
+        "color": _ZRANGE_SHADE[model][zrange_label],
+        "marker": _MODEL_MARKER.get(model, "o"),
+        "offset": _ZRANGE_X_OFFSET.get(zrange_label, 0.0),
+    }
+    return label, entry
+
 # Weibel et al. 2025 (PANORAMIC z~10 cosmic variance paper, arXiv:2512.14212),
 # sigma_CV = sqrt(sigma_CV^2 from their Eq. 4) for a 9.7 arcmin^2 NIRCam
 # pointing, 9.2<z<10.9, at M_UV<-19.5,-20,-20.5. Confirmed linear (not

@@ -46,6 +46,7 @@ from cosmic_variance import (
     GammaCVConfig,
     fit_sigma_cv_mcmc,
     summarize_gamma_fits,
+    gamma_fit_to_reference,
 )
 from run_analysis import REDSHIFT_CONFIGS
 
@@ -70,9 +71,15 @@ Z_RANGES = {
 }
 
 # Extra model: a UniverseMachine-matched ("pre-JWST") MUV catalog, built on
-# the same z=10.5 halo positions as fiducial/stochastic, but with only one
-# MUV realization available — so it's always run with n_realizations=1 and
-# bootstrap-only (no Gamma/NB MCMC fit, regardless of --skip-gamma-fit).
+# the same z=10.5 halo positions as fiducial/stochastic. It has few enough
+# realizations that the naive bootstrap's sigma_CV estimate blows up at the
+# rarer thresholds (small-N zero-count pathology — see
+# bootstrap_fractional_cosmic_variance's docstring). So unlike
+# fiducial/stochastic, its *plotted* point always comes from a Gamma/NB MCMC
+# fit (cosmic_variance.fit_sigma_cv_mcmc) on one group_size-sized draw,
+# computed fresh every run (cheap, ~tens of seconds) rather than cached —
+# regardless of --skip-gamma-fit, which only controls the optional
+# diagnostic fit on fiducial/stochastic.
 PREJWST_MODEL = "prejwst"
 PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_10.h5")
 PREJWST_N_REALIZATIONS = 10
@@ -126,8 +133,10 @@ def parse_args():
     )
     p.add_argument(
         "--skip-gamma-fit", action="store_true",
-        help="Skip the Gamma/NB MCMC fit (it requires the raw pool, so it's "
-             "always skipped anyway when loading from cache).",
+        help="Skip the *diagnostic* Gamma/NB MCMC fit printed for fiducial/"
+             "stochastic. Does not affect the pre-JWST model, whose plotted "
+             "sigma_CV always comes from a Gamma/NB fit (see PREJWST_MODEL "
+             "comment above) since the naive bootstrap is unreliable for it.",
     )
     return p.parse_args()
 
@@ -183,8 +192,10 @@ def _print_summaries(results: dict, cfg: PointingConfig) -> None:
             print(summarize_pool_moments(mean, mean_sq, cfg.thresholds, group_size=cfg.group_size))
 
 
-def _save_plot(results: dict, cfg: PointingConfig, plot_path: Path) -> None:
-    fig = plot_fractional_cosmic_variance(results, cfg.thresholds, Z_RANGES)
+def _save_plot(
+    results: dict, cfg: PointingConfig, plot_path: Path, reference: dict | None = None,
+) -> None:
+    fig = plot_fractional_cosmic_variance(results, cfg.thresholds, Z_RANGES, reference=reference)
     plot_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(plot_path, bbox_inches="tight")
     log.info(f"Saved plot: {plot_path}")
@@ -222,7 +233,6 @@ def main():
     plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.pdf"
 
     expected_models = {"fiducial", "stochastic", PREJWST_MODEL}
-    need_pool = not args.skip_gamma_fit  # the gamma fit needs the raw pool; bootstrap/moments don't if cached
 
     results = None
     if cache_path.exists() and not args.force_recompute:
@@ -236,16 +246,15 @@ def main():
                 "(missing fields) — recomputing from scratch."
             )
 
-    if results is not None and not need_pool:
-        _print_summaries(results, cfg)
-        _save_plot(results, cfg, plot_path)
-        return
-
     recompute_bootstrap = results is None
     if results is None:
-         results = {"fiducial": {}, "stochastic": {}, PREJWST_MODEL: {}}
-    elif need_pool:
-        log.info("Cache has the bootstrap/moments results already — rebuilding pools only for the Gamma/NB fit.")
+        results = {"fiducial": {}, "stochastic": {}, PREJWST_MODEL: {}}
+    else:
+        log.info(
+            "Cache has the bootstrap/moments results already — rebuilding pools "
+            "anyway, since the pre-JWST model's plotted point always needs a "
+            "fresh Gamma/NB fit (not cached, see PREJWST_MODEL comment above)."
+        )
 
     log.info(f"Loading halo catalog: {z_cfg.halo_catalog_path}")
     halo_coords, _ = load_halo_catalog(z_cfg.halo_catalog_path)
@@ -264,6 +273,8 @@ def main():
         "stochastic": args.n_realizations,
         PREJWST_MODEL: PREJWST_N_REALIZATIONS,
     }
+
+    prejwst_gamma_ref: dict[str, dict] = {}
 
     for zrange_label, (zlo, zhi) in Z_RANGES.items():
         depth_requested = comoving_depth_mpc(zlo, zhi)
@@ -288,7 +299,24 @@ def main():
                 sigma_cv2_trials = bootstrap_fractional_cosmic_variance(pool, cfg)
                 results[model][zrange_label] = (means, varis, mean, mean_sq, sigma_cv2_trials)
 
-            if not args.skip_gamma_fit and model != PREJWST_MODEL:
+            if model == PREJWST_MODEL:
+                log.info(
+                    f"  Gamma/NB MCMC fit (plotted estimate): model={model}, "
+                    f"group_size={cfg.group_size} ..."
+                )
+                rng = np.random.default_rng(0)
+                idx = rng.choice(pool.shape[0], size=min(cfg.group_size, pool.shape[0]), replace=False)
+                sample = pool[idx]
+                gamma_cfg = GammaCVConfig()
+                fits = {
+                    threshold: fit_sigma_cv_mcmc(sample[:, k], gamma_cfg)
+                    for k, threshold in enumerate(cfg.thresholds)
+                }
+                print(f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} (one {cfg.group_size}-pointing draw, plotted):")
+                print(summarize_gamma_fits(fits, cfg.thresholds))
+                label, entry = gamma_fit_to_reference(model, zlo, zhi, zrange_label, fits, cfg.thresholds)
+                prejwst_gamma_ref[label] = entry
+            elif not args.skip_gamma_fit:
                 fullpool_n = min(args.gamma_fit_max_fullpool_size, pool.shape[0])
                 log.info(
                     f"  Gamma/NB MCMC fit: model={model}, "
@@ -309,7 +337,8 @@ def main():
     _print_summaries(results, cfg)
     if recompute_bootstrap:
         save_cosmic_variance(cache_path, results)
-    _save_plot(results, cfg, plot_path)
+    plot_results = {model: by_zrange for model, by_zrange in results.items() if model != PREJWST_MODEL}
+    _save_plot(plot_results, cfg, plot_path, reference=prejwst_gamma_ref)
     log.info("All done.")
 
 
