@@ -81,8 +81,8 @@ Z_RANGES = {
 # regardless of --skip-gamma-fit, which only controls the optional
 # diagnostic fit on fiducial/stochastic.
 PREJWST_MODEL = "prejwst"
-PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_10.h5")
-PREJWST_N_REALIZATIONS = 10
+PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_30.h5")
+PREJWST_N_REALIZATIONS = 30
 
 CACHE_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cache/cosmic_variance")
 OUTPUT_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cosmic_variance_plots")
