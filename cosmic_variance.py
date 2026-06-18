@@ -697,8 +697,14 @@ def load_cosmic_variance(
 _ZRANGE_SHADE = {
     "fiducial":   {"z9p2_10p9": "#a63603", "z8p6_11p3": "#fd8d3c"},
     "stochastic": {"z9p2_10p9": "#08519c", "z8p6_11p3": "#6baed6"},
+    "prejwst":    {"z9p2_10p9": "#238b45", "z8p6_11p3": "#74c476"},
 }
-_MODEL_LABEL = {"fiducial": "intrinsically bright", "stochastic": "increased stochasticity"}
+_MODEL_LABEL = {
+    "fiducial": "intrinsically bright",
+    "stochastic": "increased stochasticity",
+    "prejwst": "pre-JWST (UM-matched)",
+}
+_MODEL_MARKER = {"fiducial": "o", "stochastic": "o", "prejwst": "^"}
 _ZRANGE_X_OFFSET = {"z9p2_10p9": -0.04, "z8p6_11p3": 0.04}
 
 # Weibel et al. 2025 (PANORAMIC z~10 cosmic variance paper, arXiv:2512.14212),
@@ -792,8 +798,8 @@ def plot_fractional_cosmic_variance(
             ax.errorbar(
                 x + offset, med,
                 yerr=[med - lo, hi - med],
-                fmt='o', color=color, capsize=3, lw=2, markersize=6,
-                label=f"{_MODEL_LABEL[model]}, ${zlo}<z<{zhi}$",
+                fmt=_MODEL_MARKER.get(model, 'o'), color=color, capsize=3, lw=2, markersize=6,
+                label=f"{_MODEL_LABEL.get(model, model)}, ${zlo}<z<{zhi}$",
             )
 
     if reference is not None:

@@ -69,6 +69,14 @@ Z_RANGES = {
     "z8p6_11p3": (8.6, 11.3),
 }
 
+# Extra model: a UniverseMachine-matched ("pre-JWST") MUV catalog, built on
+# the same z=10.5 halo positions as fiducial/stochastic, but with only one
+# MUV realization available — so it's always run with n_realizations=1 and
+# bootstrap-only (no Gamma/NB MCMC fit, regardless of --skip-gamma-fit).
+PREJWST_MODEL = "prejwst"
+PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST.h5")
+PREJWST_N_REALIZATIONS = 1
+
 CACHE_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cache/cosmic_variance")
 OUTPUT_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cosmic_variance_plots")
 
@@ -212,24 +220,31 @@ def main():
     cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.npz"
     plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.pdf"
 
-    expected_models = {"fiducial", "stochastic"}
+    expected_models = {"fiducial", "stochastic", PREJWST_MODEL}
+    need_pool = not args.skip_gamma_fit  # the gamma fit needs the raw pool; bootstrap/moments don't if cached
 
+    results = None
     if cache_path.exists() and not args.force_recompute:
         log.info(f"Cache found, loading: {cache_path}")
-        results = load_cosmic_variance(cache_path)
-        if _cache_is_complete(results, expected_models):
-            _print_summaries(results, cfg)
-            _save_plot(results, cfg, plot_path)
-            log.info(
-                "Skipping Gamma/NB MCMC fit: the cache only stores derived "
-                "statistics, not the raw pool it needs. Use --force-recompute "
-                "to get it."
+        loaded = load_cosmic_variance(cache_path)
+        if _cache_is_complete(loaded, expected_models):
+            results = loaded
+        else:
+            log.warning(
+                f"Cache at {cache_path} is incomplete or from an older script version "
+                "(missing fields) — recomputing from scratch."
             )
-            return
-        log.warning(
-            f"Cache at {cache_path} is incomplete or from an older script version "
-            "(missing fields) — recomputing from scratch."
-        )
+
+    if results is not None and not need_pool:
+        _print_summaries(results, cfg)
+        _save_plot(results, cfg, plot_path)
+        return
+
+    recompute_bootstrap = results is None
+    if results is None:
+         results = {"fiducial": {}, "stochastic": {}, PREJWST_MODEL: {}}
+    elif need_pool:
+        log.info("Cache has the bootstrap/moments results already — rebuilding pools only for the Gamma/NB fit.")
 
     log.info(f"Loading halo catalog: {z_cfg.halo_catalog_path}")
     halo_coords, _ = load_halo_catalog(z_cfg.halo_catalog_path)
@@ -241,9 +256,13 @@ def main():
     muv_paths = {
         "fiducial": z_cfg.muv_fiducial_path,
         "stochastic": z_cfg.muv_stochastic_path,
+        PREJWST_MODEL: PREJWST_MUV_PATH,
     }
-
-    results: dict = {model: {} for model in muv_paths}
+    n_realizations_per_model = {
+        "fiducial": args.n_realizations,
+        "stochastic": args.n_realizations,
+        PREJWST_MODEL: PREJWST_N_REALIZATIONS,
+    }
 
     for zrange_label, (zlo, zhi) in Z_RANGES.items():
         depth_requested = comoving_depth_mpc(zlo, zhi)
@@ -255,18 +274,20 @@ def main():
         )
 
         for model, muv_path in muv_paths.items():
-            log.info(f"  Building pointing pool: model={model}, n_realizations={args.n_realizations} ...")
+            n_real = n_realizations_per_model[model]
+            log.info(f"  Building pointing pool: model={model}, n_realizations={n_real} ...")
             pool = build_pointing_pool(
-                halo_coords, muv_path, args.n_realizations, cfg, depth, footprint_side,
+                halo_coords, muv_path, n_real, cfg, depth, footprint_side,
             )
             log.info(f"    pool shape: {pool.shape}")
 
-            means, varis = bootstrap_group_stats(pool, cfg)
-            mean, mean_sq = pool_moments(pool)
-            sigma_cv2_trials = bootstrap_fractional_cosmic_variance(pool, cfg)
-            results[model][zrange_label] = (means, varis, mean, mean_sq, sigma_cv2_trials)
+            if recompute_bootstrap:
+                means, varis = bootstrap_group_stats(pool, cfg)
+                mean, mean_sq = pool_moments(pool)
+                sigma_cv2_trials = bootstrap_fractional_cosmic_variance(pool, cfg)
+                results[model][zrange_label] = (means, varis, mean, mean_sq, sigma_cv2_trials)
 
-            if not args.skip_gamma_fit:
+            if not args.skip_gamma_fit and model != PREJWST_MODEL:
                 fullpool_n = min(args.gamma_fit_max_fullpool_size, pool.shape[0])
                 log.info(
                     f"  Gamma/NB MCMC fit: model={model}, "
@@ -285,7 +306,8 @@ def main():
                 print(summarize_gamma_fits(fits_full, cfg.thresholds))
 
     _print_summaries(results, cfg)
-    save_cosmic_variance(cache_path, results)
+    if recompute_bootstrap:
+        save_cosmic_variance(cache_path, results)
     _save_plot(results, cfg, plot_path)
     log.info("All done.")
 
