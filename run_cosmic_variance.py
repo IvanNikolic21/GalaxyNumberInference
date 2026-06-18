@@ -74,8 +74,8 @@ Z_RANGES = {
 # MUV realization available — so it's always run with n_realizations=1 and
 # bootstrap-only (no Gamma/NB MCMC fit, regardless of --skip-gamma-fit).
 PREJWST_MODEL = "prejwst"
-PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST.h5")
-PREJWST_N_REALIZATIONS = 1
+PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_10.h5")
+PREJWST_N_REALIZATIONS = 10
 
 CACHE_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cache/cosmic_variance")
 OUTPUT_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cosmic_variance_plots")
@@ -217,8 +217,9 @@ def main():
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fov_tag = f"fov{args.fov_area_arcmin2:g}"
-    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.npz"
-    plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}.pdf"
+    pj_tag = f"pj-{PREJWST_MUV_PATH.stem}-real{PREJWST_N_REALIZATIONS}"
+    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.npz"
+    plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.pdf"
 
     expected_models = {"fiducial", "stochastic", PREJWST_MODEL}
     need_pool = not args.skip_gamma_fit  # the gamma fit needs the raw pool; bootstrap/moments don't if cached
