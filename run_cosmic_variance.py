@@ -71,18 +71,24 @@ Z_RANGES = {
 }
 
 # Extra model: a UniverseMachine-matched ("pre-JWST") MUV catalog, built on
-# the same z=10.5 halo positions as fiducial/stochastic. It has few enough
-# realizations that the naive bootstrap's sigma_CV estimate blows up at the
-# rarer thresholds (small-N zero-count pathology — see
-# bootstrap_fractional_cosmic_variance's docstring). So unlike
-# fiducial/stochastic, its *plotted* point always comes from a Gamma/NB MCMC
-# fit (cosmic_variance.fit_sigma_cv_mcmc) on one group_size-sized draw,
-# computed fresh every run (cheap, ~tens of seconds) rather than cached —
-# regardless of --skip-gamma-fit, which only controls the optional
-# diagnostic fit on fiducial/stochastic.
+# the same z=10.5 halo positions as fiducial/stochastic, but with much lower
+# abundance per M_UV threshold (~30-40x lower mean count/pointing than
+# fiducial/stochastic).
 PREJWST_MODEL = "prejwst"
 PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_30.h5")
 PREJWST_N_REALIZATIONS = 30
+
+# All three models are plotted using a Gamma/NB MCMC fit
+# (cosmic_variance.fit_sigma_cv_mcmc) rather than the naive bootstrap median.
+# We switched fiducial/stochastic over too after direct comparison showed
+# the bootstrap median collapsing to ~0 at rare thresholds (M_UV<-20.5) where
+# the true (full-pool, method-of-moments) sigma_CV is ~0.7 -- the exact
+# small-N zero-count pathology bootstrap_fractional_cosmic_variance's
+# docstring warns about. Using the same large-sample Gamma/NB fit for every
+# model keeps the comparison apples-to-apples. This is computed fresh every
+# run rather than cached (cheap relative to catalog loading) and is
+# unaffected by --skip-gamma-fit, which only toggles a diagnostic print.
+GAMMA_PLOTTED_MODELS = {"fiducial", "stochastic", PREJWST_MODEL}
 
 CACHE_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cache/cosmic_variance")
 OUTPUT_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cosmic_variance_plots")
@@ -145,10 +151,12 @@ def parse_args():
     )
     p.add_argument(
         "--skip-gamma-fit", action="store_true",
-        help="Skip the *diagnostic* Gamma/NB MCMC fit printed for fiducial/"
-             "stochastic. Does not affect the pre-JWST model, whose plotted "
-             "sigma_CV always comes from a Gamma/NB fit (see PREJWST_MODEL "
-             "comment above) since the naive bootstrap is unreliable for it.",
+        help="Skip printing the diagnostic 28-pointing single-draw Gamma/NB "
+             "fit table for fiducial/stochastic. Does NOT skip the actual "
+             "computation: the 5000-pointing precision-check fit always runs "
+             "and is what's plotted for ALL THREE models now (the bootstrap "
+             "median was shown to collapse to ~0 at rare thresholds like "
+             "M_UV<-20.5 -- see the module-level comment near GAMMA_PLOTTED_MODELS).",
     )
     return p.parse_args()
 
@@ -241,8 +249,13 @@ def main():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fov_tag = f"fov{args.fov_area_arcmin2:g}"
     pj_tag = f"pj-{PREJWST_MUV_PATH.stem}-real{PREJWST_N_REALIZATIONS}"
-    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.npz"
-    plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.pdf"
+    # Bumped when the meaning of cfg.thresholds changes (e.g. cumulative ->
+    # differential bins) so old caches with a different counting convention
+    # are never silently reused -- they'd pass _cache_is_complete's shape/key
+    # checks despite meaning something different.
+    bins_tag = "diffbins"
+    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{bins_tag}.npz"
+    plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{bins_tag}.pdf"
 
     expected_models = {"fiducial", "stochastic", PREJWST_MODEL}
 
@@ -264,8 +277,8 @@ def main():
     else:
         log.info(
             "Cache has the bootstrap/moments results already — rebuilding pools "
-            "anyway, since the pre-JWST model's plotted point always needs a "
-            "fresh Gamma/NB fit (not cached, see PREJWST_MODEL comment above)."
+            "anyway, since every model's plotted point always needs a fresh "
+            "Gamma/NB fit (not cached, see GAMMA_PLOTTED_MODELS comment above)."
         )
 
     log.info(f"Loading halo catalog: {z_cfg.halo_catalog_path}")
@@ -286,7 +299,7 @@ def main():
         PREJWST_MODEL: PREJWST_N_REALIZATIONS,
     }
 
-    prejwst_gamma_ref: dict[str, dict] = {}
+    gamma_ref: dict[str, dict] = {}
 
     for zrange_label, (zlo, zhi) in Z_RANGES.items():
         depth_requested = comoving_depth_mpc(zlo, zhi)
@@ -328,30 +341,33 @@ def main():
                 print(f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} (one {pj_sample_size}-pointing draw, plotted):")
                 print(summarize_gamma_fits(fits, cfg.thresholds))
                 label, entry = gamma_fit_to_reference(model, zlo, zhi, zrange_label, fits, cfg.thresholds)
-                prejwst_gamma_ref[label] = entry
-            elif not args.skip_gamma_fit:
+                gamma_ref[label] = entry
+            else:
                 fullpool_n = min(args.gamma_fit_max_fullpool_size, pool.shape[0])
                 log.info(
                     f"  Gamma/NB MCMC fit: model={model}, "
-                    f"group_size={args.gamma_fit_group_size} + {fullpool_n}-pointing precision check ..."
+                    f"group_size={args.gamma_fit_group_size} + {fullpool_n}-pointing precision check (plotted) ..."
                 )
                 fits_sub, fits_full = _run_gamma_fits(
                     pool, cfg, args.gamma_fit_group_size,
                     max_fullpool_size=args.gamma_fit_max_fullpool_size,
                 )
-                print(
-                    f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} "
-                    f"(one {args.gamma_fit_group_size}-pointing draw):"
-                )
-                print(summarize_gamma_fits(fits_sub, cfg.thresholds))
-                print(f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} ({fullpool_n}-pointing precision check):")
-                print(summarize_gamma_fits(fits_full, cfg.thresholds))
+                if not args.skip_gamma_fit:
+                    print(
+                        f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} "
+                        f"(one {args.gamma_fit_group_size}-pointing draw):"
+                    )
+                    print(summarize_gamma_fits(fits_sub, cfg.thresholds))
+                    print(f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} ({fullpool_n}-pointing precision check, plotted):")
+                    print(summarize_gamma_fits(fits_full, cfg.thresholds))
+                label, entry = gamma_fit_to_reference(model, zlo, zhi, zrange_label, fits_full, cfg.thresholds)
+                gamma_ref[label] = entry
 
     _print_summaries(results, cfg)
     if recompute_bootstrap:
         save_cosmic_variance(cache_path, results)
-    plot_results = {model: by_zrange for model, by_zrange in results.items() if model != PREJWST_MODEL}
-    _save_plot(plot_results, cfg, plot_path, reference=prejwst_gamma_ref)
+    plot_results = {model: by_zrange for model, by_zrange in results.items() if model not in GAMMA_PLOTTED_MODELS}
+    _save_plot(plot_results, cfg, plot_path, reference=gamma_ref)
     log.info("All done.")
 
 

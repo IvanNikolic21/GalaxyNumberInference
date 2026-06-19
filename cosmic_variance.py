@@ -16,7 +16,9 @@ NIRCam-sized footprints (2.2 x 2.2 arcmin by default), once per available MUV
 realization. Each (realization, footprint) combination is one independent
 "forward-modeled pointing". Groups of `group_size` pointings (default 28,
 matching a planned mosaic survey) are then bootstrap-sampled to estimate the
-mean and variance of galaxy counts brighter than a set of MUV thresholds.
+mean and variance of galaxy counts in a set of MUV bins -- differential
+bins between adjacent thresholds, except the faintest-magnitude-cut bin
+(M_UV < thresholds[-1]) which is cumulative. See `PointingConfig.thresholds`.
 
 Pipeline
 --------
@@ -89,7 +91,15 @@ class PointingConfig:
         surveys like PANORAMIC). Same area-based convention as
         `AnalysisConfig.survey_area_arcmin2` in galaxy_neighbors.py.
     thresholds : list of float
-        MUV thresholds; a galaxy counts if M_UV < threshold.
+        MUV bin edges, in descending numeric order (faintest first), e.g.
+        [-19.5, -20.0, -20.5]. A galaxy is assigned to the bin for
+        thresholds[k] if thresholds[k+1] <= M_UV < thresholds[k] -- a
+        *differential* magnitude bin between this threshold and the next
+        (brighter) one. The last (brightest) threshold has no "next" edge,
+        so it's cumulative: M_UV < thresholds[-1]. This matches Weibel et al.
+        2025's (arXiv:2512.14212) panel convention -- e.g. their Fig. A1 is
+        literally titled "-20<M_UV<-19.5", "-20.5<M_UV<-20", "M_UV<-20.5" --
+        which is what PANORAMIC_SIGMA_CV's reference values were read off of.
     group_size : int
         Number of pointings per bootstrap "survey" draw. Default: 28.
     n_trials : int
@@ -109,6 +119,14 @@ class PointingConfig:
     n_trials: int = 2000
     los_axis: int = 2
     seed: int = 42
+
+    def __post_init__(self):
+        if list(self.thresholds) != sorted(self.thresholds, reverse=True):
+            raise ValueError(
+                f"thresholds must be in descending numeric order (faintest "
+                f"first), e.g. [-19.5, -20.0, -20.5] -- got {self.thresholds}. "
+                "Differential binning relies on adjacent-pair ordering."
+            )
 
     @property
     def transverse_axes(self) -> tuple[int, int]:
@@ -175,7 +193,10 @@ def count_pointings_for_realization(
 
     Slices the box to the LOS window [0, depth_mpc) along `cfg.los_axis`,
     then bins the transverse coordinates into a grid of footprints and
-    counts galaxies brighter than each threshold per footprint.
+    counts galaxies per footprint in each magnitude bin defined by
+    `cfg.thresholds` -- differential bins between adjacent thresholds,
+    except the last (brightest) one which is cumulative (M_UV < thresholds[-1]).
+    See `PointingConfig.thresholds` docstring.
 
     Parameters
     ----------
@@ -204,7 +225,10 @@ def count_pointings_for_realization(
 
     counts = np.empty((n_per_side, n_per_side, len(cfg.thresholds)))
     for k, threshold in enumerate(cfg.thresholds):
-        sel = muvs_s < threshold
+        if k + 1 < len(cfg.thresholds):
+            sel = (muvs_s < threshold) & (muvs_s >= cfg.thresholds[k + 1])
+        else:
+            sel = muvs_s < threshold
         hist, _, _ = np.histogram2d(coords_t[sel, 0], coords_t[sel, 1], bins=[edges, edges])
         counts[:, :, k] = hist
 
