@@ -579,6 +579,12 @@ def fit_sigma_cv_mcmc(counts: np.ndarray, cfg: Optional[GammaCVConfig] = None) -
 
     counts = np.asarray(counts)
     mean_obs = float(np.mean(counts))
+    if mean_obs <= 0:
+        raise ValueError(
+            f"fit_sigma_cv_mcmc: zero detections across all {len(counts)} pointings "
+            "in this sample -- this threshold is too rare for the sample size used; "
+            "increase the sample size or drop this threshold."
+        )
     rng = np.random.default_rng(cfg.seed)
 
     # Initialize walkers near a method-of-moments estimate, jittered.

@@ -132,6 +132,18 @@ def parse_args():
              "scales with this number, so keep it in the low thousands.",
     )
     p.add_argument(
+        "--prejwst-gamma-sample-size", type=int, default=20000,
+        help="Sample size for the pre-JWST model's plotted Gamma/NB fit "
+             "(capped at its pool size). Its mean count per pointing is far "
+             "lower than fiducial/stochastic, so the NB likelihood carries "
+             "much less information per pointing — it needs a much bigger "
+             "sample than --group-size to converge (5000 pointings already "
+             "matches the full-pool estimate well for fiducial's abundance; "
+             "pre-JWST's abundance is ~30-40x lower, hence the bigger "
+             "default here). Increase further (up to its full pool size) "
+             "for max precision at the cost of runtime.",
+    )
+    p.add_argument(
         "--skip-gamma-fit", action="store_true",
         help="Skip the *diagnostic* Gamma/NB MCMC fit printed for fiducial/"
              "stochastic. Does not affect the pre-JWST model, whose plotted "
@@ -300,19 +312,20 @@ def main():
                 results[model][zrange_label] = (means, varis, mean, mean_sq, sigma_cv2_trials)
 
             if model == PREJWST_MODEL:
+                pj_sample_size = min(args.prejwst_gamma_sample_size, pool.shape[0])
                 log.info(
                     f"  Gamma/NB MCMC fit (plotted estimate): model={model}, "
-                    f"group_size={cfg.group_size} ..."
+                    f"sample_size={pj_sample_size} (of pool={pool.shape[0]}) ..."
                 )
                 rng = np.random.default_rng(0)
-                idx = rng.choice(pool.shape[0], size=min(cfg.group_size, pool.shape[0]), replace=False)
+                idx = rng.choice(pool.shape[0], size=pj_sample_size, replace=False)
                 sample = pool[idx]
                 gamma_cfg = GammaCVConfig()
                 fits = {
                     threshold: fit_sigma_cv_mcmc(sample[:, k], gamma_cfg)
                     for k, threshold in enumerate(cfg.thresholds)
                 }
-                print(f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} (one {cfg.group_size}-pointing draw, plotted):")
+                print(f"\n  Gamma/NB MCMC fit — {model}, {zrange_label} (one {pj_sample_size}-pointing draw, plotted):")
                 print(summarize_gamma_fits(fits, cfg.thresholds))
                 label, entry = gamma_fit_to_reference(model, zlo, zhi, zrange_label, fits, cfg.thresholds)
                 prejwst_gamma_ref[label] = entry
