@@ -75,8 +75,8 @@ Z_RANGES = {
 # abundance per M_UV threshold (~30-40x lower mean count/pointing than
 # fiducial/stochastic).
 PREJWST_MODEL = "prejwst"
-PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_30.h5")
-PREJWST_N_REALIZATIONS = 30
+PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_10.h5")
+PREJWST_N_REALIZATIONS = 10
 
 # All three models are plotted using a Gamma/NB MCMC fit
 # (cosmic_variance.fit_sigma_cv_mcmc) rather than the naive bootstrap median.
