@@ -30,6 +30,7 @@ from cosmic_variance import (
 )
 from run_cosmic_variance import (
     CACHE_DIR, OUTPUT_DIR, Z_RANGES, PREJWST_MUV_PATH, PREJWST_N_REALIZATIONS,
+    ALT_N_REALIZATIONS,
 )
 
 
@@ -48,9 +49,10 @@ def main():
 
     fov_tag = f"fov{args.fov_area_arcmin2:g}"
     pj_tag = f"pj-{PREJWST_MUV_PATH.stem}-real{PREJWST_N_REALIZATIONS}"
+    alt_tag = f"alt2cmpc-real{ALT_N_REALIZATIONS}"
     cache_path = (
         CACHE_DIR
-        / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.npz"
+        / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{alt_tag}.npz"
     )
     if not cache_path.exists():
         raise FileNotFoundError(
@@ -63,7 +65,7 @@ def main():
         results, cfg.thresholds, Z_RANGES, reference=PANORAMIC_SIGMA_CV,
     )
 
-    out_path = OUTPUT_DIR / f"sigma_cv_vs_panoramic_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.pdf"
+    out_path = OUTPUT_DIR / f"sigma_cv_vs_panoramic_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{alt_tag}.pdf"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
     print(f"Saved: {out_path}")

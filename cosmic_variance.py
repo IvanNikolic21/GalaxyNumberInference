@@ -709,13 +709,20 @@ _ZRANGE_SHADE = {
     "fiducial":   {"z9p2_10p9": "#a63603", "z8p6_11p3": "#fd8d3c"},
     "stochastic": {"z9p2_10p9": "#08519c", "z8p6_11p3": "#6baed6"},
     "prejwst":    {"z9p2_10p9": "#238b45", "z8p6_11p3": "#74c476"},
+    "fiducial_2cmpc":   {"z9p2_10p9": "#7f2704", "z8p6_11p3": "#fdae6b"},
+    "stochastic_2cmpc": {"z9p2_10p9": "#08306b", "z8p6_11p3": "#9ecae1"},
 }
 _MODEL_LABEL = {
     "fiducial": "intrinsically bright",
     "stochastic": "increased stochasticity",
     "prejwst": "pre-JWST (UM-matched)",
+    "fiducial_2cmpc": "intrinsically bright (2 cMpc box)",
+    "stochastic_2cmpc": "increased stochasticity (2 cMpc box)",
 }
-_MODEL_MARKER = {"fiducial": "o", "stochastic": "o", "prejwst": "^"}
+_MODEL_MARKER = {
+    "fiducial": "o", "stochastic": "o", "prejwst": "^",
+    "fiducial_2cmpc": "s", "stochastic_2cmpc": "s",
+}
 _ZRANGE_X_OFFSET = {"z9p2_10p9": -0.04, "z8p6_11p3": 0.04}
 
 

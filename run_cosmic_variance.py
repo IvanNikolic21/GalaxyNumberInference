@@ -78,7 +78,22 @@ PREJWST_MODEL = "prejwst"
 PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_90.h5")
 PREJWST_N_REALIZATIONS = 90
 
-# All three models are plotted using a Gamma/NB MCMC fit
+# Extra pair of models: fiducial/stochastic re-run on a *different* box (2 cMpc
+# cell resolution instead of 1 cMpc, same 512 cMpc side) that doesn't show the
+# halo-discreteness dip in the UVLF near M_UV~-20 that the original 1 cMpc box
+# has. Genuinely different halo positions (different box/seed), so needs its
+# own halo catalog load -- can't reuse REDSHIFT_CONFIGS[BOX_REDSHIFT].
+ALT_MODEL_FIDUCIAL = "fiducial_2cmpc"
+ALT_MODEL_STOCHASTIC = "stochastic_2cmpc"
+ALT_HALO_CATALOG_PATH = Path(
+    "/lustre/astro/ivannik/21cmFAST_cache/35cad804f1ecf8140075f9274d2ecd18/"
+    "1951/ffa852ccaa39d8f82951cc98ff798ab4/10.5000/HaloCatalog.h5"
+)
+ALT_FIDUCIAL_MUV_PATH = Path("/lustre/astro/ivannik/catalog_fid.h5")
+ALT_STOCHASTIC_MUV_PATH = Path("/lustre/astro/ivannik/catalog_stoch_new.h5")
+ALT_N_REALIZATIONS = 10
+
+# All models are plotted using a Gamma/NB MCMC fit
 # (cosmic_variance.fit_sigma_cv_mcmc) rather than the naive bootstrap median.
 # We switched fiducial/stochastic over too after direct comparison showed
 # the bootstrap median collapsing to ~0 at rare thresholds (M_UV<-20.5) where
@@ -88,7 +103,10 @@ PREJWST_N_REALIZATIONS = 90
 # model keeps the comparison apples-to-apples. This is computed fresh every
 # run rather than cached (cheap relative to catalog loading) and is
 # unaffected by --skip-gamma-fit, which only toggles a diagnostic print.
-GAMMA_PLOTTED_MODELS = {"fiducial", "stochastic", PREJWST_MODEL}
+GAMMA_PLOTTED_MODELS = {
+    "fiducial", "stochastic", PREJWST_MODEL,
+    ALT_MODEL_FIDUCIAL, ALT_MODEL_STOCHASTIC,
+}
 
 CACHE_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cache/cosmic_variance")
 OUTPUT_DIR = Path("/groups/astro/ivannik/projects/Neighbors/cosmic_variance_plots")
@@ -249,10 +267,11 @@ def main():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fov_tag = f"fov{args.fov_area_arcmin2:g}"
     pj_tag = f"pj-{PREJWST_MUV_PATH.stem}-real{PREJWST_N_REALIZATIONS}"
-    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.npz"
-    plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.pdf"
+    alt_tag = f"alt2cmpc-real{ALT_N_REALIZATIONS}"
+    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{alt_tag}.npz"
+    plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{alt_tag}.pdf"
 
-    expected_models = {"fiducial", "stochastic", PREJWST_MODEL}
+    expected_models = {"fiducial", "stochastic", PREJWST_MODEL, ALT_MODEL_FIDUCIAL, ALT_MODEL_STOCHASTIC}
 
     results = None
     if cache_path.exists() and not args.force_recompute:
@@ -268,7 +287,10 @@ def main():
 
     recompute_bootstrap = results is None
     if results is None:
-        results = {"fiducial": {}, "stochastic": {}, PREJWST_MODEL: {}}
+        results = {
+            "fiducial": {}, "stochastic": {}, PREJWST_MODEL: {},
+            ALT_MODEL_FIDUCIAL: {}, ALT_MODEL_STOCHASTIC: {},
+        }
     else:
         log.info(
             "Cache has the bootstrap/moments results already — rebuilding pools "
@@ -280,18 +302,21 @@ def main():
     halo_coords, _ = load_halo_catalog(z_cfg.halo_catalog_path)
     log.info(f"  {len(halo_coords)} halos with M > 0")
 
+    log.info(f"Loading alternate (2 cMpc) halo catalog: {ALT_HALO_CATALOG_PATH}")
+    halo_coords_alt, _ = load_halo_catalog(ALT_HALO_CATALOG_PATH)
+    log.info(f"  {len(halo_coords_alt)} halos with M > 0")
+
     footprint_side = footprint_side_mpc(BOX_REDSHIFT, cfg.fov_area_arcmin2)
     log.info(f"NIRCam footprint side at z={BOX_REDSHIFT}: {footprint_side:.3f} Mpc")
 
-    muv_paths = {
-        "fiducial": z_cfg.muv_fiducial_path,
-        "stochastic": z_cfg.muv_stochastic_path,
-        PREJWST_MODEL: PREJWST_MUV_PATH,
-    }
-    n_realizations_per_model = {
-        "fiducial": args.n_realizations,
-        "stochastic": args.n_realizations,
-        PREJWST_MODEL: PREJWST_N_REALIZATIONS,
+    # model -> (muv_path, n_realizations, halo_coords) -- the alt-box models
+    # use a different halo catalog (different box/seed), not z_cfg's.
+    model_specs = {
+        "fiducial": (z_cfg.muv_fiducial_path, args.n_realizations, halo_coords),
+        "stochastic": (z_cfg.muv_stochastic_path, args.n_realizations, halo_coords),
+        PREJWST_MODEL: (PREJWST_MUV_PATH, PREJWST_N_REALIZATIONS, halo_coords),
+        ALT_MODEL_FIDUCIAL: (ALT_FIDUCIAL_MUV_PATH, ALT_N_REALIZATIONS, halo_coords_alt),
+        ALT_MODEL_STOCHASTIC: (ALT_STOCHASTIC_MUV_PATH, ALT_N_REALIZATIONS, halo_coords_alt),
     }
 
     gamma_ref: dict[str, dict] = {}
@@ -305,11 +330,10 @@ def main():
             + ("  [TRUNCATED]" if truncated else "")
         )
 
-        for model, muv_path in muv_paths.items():
-            n_real = n_realizations_per_model[model]
+        for model, (muv_path, n_real, halo_coords_for_model) in model_specs.items():
             log.info(f"  Building pointing pool: model={model}, n_realizations={n_real} ...")
             pool = build_pointing_pool(
-                halo_coords, muv_path, n_real, cfg, depth, footprint_side,
+                halo_coords_for_model, muv_path, n_real, cfg, depth, footprint_side,
             )
             log.info(f"    pool shape: {pool.shape}")
 
