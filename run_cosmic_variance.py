@@ -75,8 +75,8 @@ Z_RANGES = {
 # abundance per M_UV threshold (~30-40x lower mean count/pointing than
 # fiducial/stochastic).
 PREJWST_MODEL = "prejwst"
-PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_10.h5")
-PREJWST_N_REALIZATIONS = 10
+PREJWST_MUV_PATH = Path("/lustre/astro/ivannik/catalog_preJWST_90.h5")
+PREJWST_N_REALIZATIONS = 90
 
 # All three models are plotted using a Gamma/NB MCMC fit
 # (cosmic_variance.fit_sigma_cv_mcmc) rather than the naive bootstrap median.
@@ -249,13 +249,8 @@ def main():
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     fov_tag = f"fov{args.fov_area_arcmin2:g}"
     pj_tag = f"pj-{PREJWST_MUV_PATH.stem}-real{PREJWST_N_REALIZATIONS}"
-    # Bumped when the meaning of cfg.thresholds changes (e.g. cumulative ->
-    # differential bins) so old caches with a different counting convention
-    # are never silently reused -- they'd pass _cache_is_complete's shape/key
-    # checks despite meaning something different.
-    bins_tag = "diffbins"
-    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{bins_tag}.npz"
-    plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{bins_tag}.pdf"
+    cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.npz"
+    plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}.pdf"
 
     expected_models = {"fiducial", "stochastic", PREJWST_MODEL}
 
