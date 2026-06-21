@@ -696,6 +696,56 @@ def load_cosmic_variance(
     }
 
 
+_GAMMA_SUMMARY_SLOTS = (
+    "mu_median", "mu_lo", "mu_hi",
+    "sigma_cv_median", "sigma_cv_lo", "sigma_cv_hi",
+)
+
+
+def save_gamma_summary(
+    path: str | Path,
+    gamma_fits_by_model: dict[str, dict[str, dict[float, dict]]],
+) -> None:
+    """Save Gamma/NB fit summary statistics to a compressed numpy archive.
+
+    Only the 6 percentile scalars per (model, z-range, threshold) are saved
+    (not the MCMC chains, which `fit_sigma_cv_mcmc` also returns) — enough
+    to rebuild a `gamma_fit_to_reference` entry without recomputation, e.g.
+    in `plot_panoramic_comparison.py`. Flat key format:
+    ``model__zrange_label__threshold__slot``.
+
+    Parameters
+    ----------
+    path : str or Path
+    gamma_fits_by_model : dict
+        gamma_fits_by_model[model][zrange_label][threshold] = result dict
+        from `fit_sigma_cv_mcmc` (the *plotted* fit for that model).
+    """
+    path = Path(path)
+    flat: dict[str, np.ndarray] = {}
+    for model, by_zrange in gamma_fits_by_model.items():
+        for zrange_label, by_threshold in by_zrange.items():
+            for threshold, fit in by_threshold.items():
+                for slot in _GAMMA_SUMMARY_SLOTS:
+                    flat[f"{model}__{zrange_label}__{threshold:g}__{slot}"] = np.asarray(fit[slot])
+    np.savez_compressed(path, **flat)
+    print(f"Saved Gamma/NB fit summary → {path}.npz" if path.suffix != ".npz" else f"Saved Gamma/NB fit summary → {path}")
+
+
+def load_gamma_summary(
+    path: str | Path,
+) -> dict[str, dict[str, dict[float, dict]]]:
+    """Load a Gamma/NB fit summary saved by `save_gamma_summary`."""
+    path = Path(path)
+    archive = np.load(path)
+    out: dict[str, dict[str, dict[float, dict]]] = {}
+    for flat_key in archive.files:
+        model, zrange_label, threshold_str, slot = flat_key.split("__")
+        fit = out.setdefault(model, {}).setdefault(zrange_label, {}).setdefault(float(threshold_str), {})
+        fit[slot] = float(archive[flat_key])
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Plotting
 # ---------------------------------------------------------------------------

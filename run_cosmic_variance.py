@@ -47,6 +47,7 @@ from cosmic_variance import (
     fit_sigma_cv_mcmc,
     summarize_gamma_fits,
     gamma_fit_to_reference,
+    save_gamma_summary,
 )
 from run_analysis import REDSHIFT_CONFIGS
 
@@ -270,6 +271,11 @@ def main():
     alt_tag = f"alt2cmpc-real{ALT_N_REALIZATIONS}"
     cache_path = CACHE_DIR / f"cosmic_variance_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{alt_tag}.npz"
     plot_path = OUTPUT_DIR / f"sigma_cv_vs_Muv_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{alt_tag}.pdf"
+    # Small summary (median/16-84, not the MCMC chains) of every model's
+    # *plotted* Gamma/NB fit, saved so plot_panoramic_comparison.py can build
+    # its own reference overlay (incl. swapping in the 2 cMpc box's fit at
+    # specific thresholds) without rerunning the MCMC.
+    gamma_summary_path = CACHE_DIR / f"gamma_summary_real{args.n_realizations}_trials{args.n_trials}_g{args.group_size}_{fov_tag}_{pj_tag}_{alt_tag}.npz"
 
     expected_models = {"fiducial", "stochastic", PREJWST_MODEL, ALT_MODEL_FIDUCIAL, ALT_MODEL_STOCHASTIC}
 
@@ -320,6 +326,7 @@ def main():
     }
 
     gamma_ref: dict[str, dict] = {}
+    gamma_fits_by_model: dict[str, dict[str, dict]] = {}
 
     for zrange_label, (zlo, zhi) in Z_RANGES.items():
         depth_requested = comoving_depth_mpc(zlo, zhi)
@@ -361,6 +368,7 @@ def main():
                 print(summarize_gamma_fits(fits, cfg.thresholds))
                 label, entry = gamma_fit_to_reference(model, zlo, zhi, zrange_label, fits, cfg.thresholds)
                 gamma_ref[label] = entry
+                gamma_fits_by_model.setdefault(model, {})[zrange_label] = fits
             else:
                 fullpool_n = min(args.gamma_fit_max_fullpool_size, pool.shape[0])
                 log.info(
@@ -381,10 +389,12 @@ def main():
                     print(summarize_gamma_fits(fits_full, cfg.thresholds))
                 label, entry = gamma_fit_to_reference(model, zlo, zhi, zrange_label, fits_full, cfg.thresholds)
                 gamma_ref[label] = entry
+                gamma_fits_by_model.setdefault(model, {})[zrange_label] = fits_full
 
     _print_summaries(results, cfg)
     if recompute_bootstrap:
         save_cosmic_variance(cache_path, results)
+    save_gamma_summary(gamma_summary_path, gamma_fits_by_model)
     plot_results = {model: by_zrange for model, by_zrange in results.items() if model not in GAMMA_PLOTTED_MODELS}
     _save_plot(plot_results, cfg, plot_path, reference=gamma_ref)
     log.info("All done.")
