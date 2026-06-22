@@ -100,12 +100,33 @@ def matched_mass_threshold(
     halo_coords: np.ndarray, log10_masses: np.ndarray, cfg: PointingConfig,
     depth_mpc: float, footprint_side: float, target_mean: float,
 ) -> float:
-    """log10(M_halo) threshold whose mean count-per-pointing matches `target_mean`."""
+    """log10(M_halo) threshold whose mean count-per-pointing matches `target_mean`.
+
+    Grid is rank-based (log-spaced from the single rarest halo in the slice
+    up to all of them), not percentile-based: with O(1e7) halos in the slice,
+    even the 99.9th percentile still corresponds to tens of thousands of
+    halos -- far more abundant than some M_UV-selected thresholds (which can
+    have <N> << 1 per pointing). A percentile grid that doesn't reach far
+    enough into the tail makes every such target_mean fall below the grid's
+    achievable minimum, and np.interp silently *clips* out-of-range inputs to
+    the boundary value rather than erroring -- so every threshold below the
+    grid's reach collapses to the same (wrong) matched mass silently.
+    """
     los = halo_coords[:, cfg.los_axis]
     masses_s = log10_masses[los < depth_mpc]
-    grid = np.unique(np.percentile(masses_s, np.linspace(0.5, 99.9, 60)))
+    n_s = len(masses_s)
+    sorted_desc = np.sort(masses_s)[::-1]
+    ranks = np.unique(np.geomspace(3, n_s - 1, 100).astype(int))
+    grid = sorted_desc[ranks]
+
     pool = count_pointings_by_mass(halo_coords, log10_masses, list(grid), cfg, depth_mpc, footprint_side)
     mean_halo = pool.mean(axis=0)
+    if not (mean_halo.min() <= target_mean <= mean_halo.max()):
+        print(
+            f"  WARNING: target_mean={target_mean:.5f} outside the abundance-matchable "
+            f"range [{mean_halo.min():.5f}, {mean_halo.max():.5f}] for this slice -- "
+            "result below is clipped to the nearest achievable threshold, not a true match."
+        )
     order = np.argsort(mean_halo)
     return float(np.interp(target_mean, mean_halo[order], grid[order]))
 
