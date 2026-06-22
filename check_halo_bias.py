@@ -43,6 +43,16 @@ If b_empirical is systematically well below b_Tinker across thresholds,
 that's direct evidence the halo finder under-clusters relative to mass,
 which would explain low sigma_CV independent of galaxy-formation choices.
 
+Additionally (unless --skip-galaxies), repeats the *same* whole-box,
+same-cell-size, same sigma_DM_linear measurement for M_UV-selected galaxies
+in each model -- there's no analytic b_Tinker equivalent for an M_UV cut, so
+this table has no `ratio` column, but its b_empirical is directly comparable
+to the halo table's b_empirical (same scale, same normalization), letting
+you see e.g. whether stochastic's extra M_halo->M_UV scatter pulls galaxy
+bias below halo bias at the same scale -- the same question
+check_bias_dilution.py asks via abundance-matching, but at this fixed,
+isotropic cell scale instead of the survey pencil-beam window.
+
 Usage
 -----
     python check_halo_bias.py --halo-catalog-path /path/to/HaloCatalog.h5
@@ -55,8 +65,8 @@ from scipy.integrate import quad
 from astropy.cosmology import Planck18 as cosmo
 import astropy.units as u
 
-from galaxy_neighbors import load_halo_catalog
-from cosmic_variance import pool_moments, fractional_cosmic_variance, poisson_cosmic_variance
+from galaxy_neighbors import load_halo_catalog, load_muv_catalog
+from cosmic_variance import PointingConfig, pool_moments, fractional_cosmic_variance, poisson_cosmic_variance
 from check_box_missing_power import power_spectrum, _tophat_window, BOX_REDSHIFT
 
 BOX_LEN_MPC = 512.0
@@ -116,11 +126,39 @@ def count_cells_by_mass(
     return counts.reshape(-1, len(thresholds))
 
 
+def count_cells_by_muv(
+    halo_coords: np.ndarray, muv_catalog_path, n_realizations: int, thresholds: list,
+    n_per_side: int, box_len_mpc: float,
+) -> np.ndarray:
+    """3D counts-in-cells for cumulative M_UV thresholds (M_UV < threshold),
+    same whole-box n_per_side^3 cubic-cell tiling as `count_cells_by_mass`,
+    stacked across MUV realizations (same halo positions every time, just a
+    fresh M_halo->M_UV draw per realization -- exactly mirroring how
+    `build_pointing_pool` stacks realizations for the survey-window pools,
+    just with this isotropic whole-box tiling instead of the pencil-beam one)."""
+    edges = np.linspace(0.0, box_len_mpc, n_per_side + 1)
+    rows = []
+    for i in range(n_realizations):
+        muvs = load_muv_catalog(muv_catalog_path, index=i)
+        counts = np.empty((n_per_side, n_per_side, n_per_side, len(thresholds)))
+        for k, threshold in enumerate(thresholds):
+            sel = muvs < threshold
+            hist, _ = np.histogramdd(halo_coords[sel], bins=[edges, edges, edges])
+            counts[..., k] = hist
+        rows.append(counts.reshape(-1, len(thresholds)))
+    return np.concatenate(rows, axis=0)
+
+
 def parse_args():
-    p = argparse.ArgumentParser(description="Empirical vs. Tinker (2010) halo bias check")
+    p = argparse.ArgumentParser(description="Empirical vs. Tinker (2010) halo bias check, plus galaxy bias at the same scale")
     p.add_argument("--halo-catalog-path", type=str, default=None,
                    help="Defaults to REDSHIFT_CONFIGS[10.5].halo_catalog_path from run_analysis.py.")
     p.add_argument("--n-per-side", type=int, default=N_PER_SIDE)
+    p.add_argument("--n-realizations", type=int, default=30,
+                   help="MUV realizations per galaxy model, for the galaxy-bias table.")
+    p.add_argument("--skip-galaxies", action="store_true",
+                   help="Only run the halo-bias-vs-Tinker table (original behavior).")
+    p.add_argument("--include-prejwst", action="store_true")
     return p.parse_args()
 
 
@@ -173,6 +211,37 @@ def main():
             "counts) -- see poisson_cosmic_variance's warning above; b_empirical=0 "
             "there is a floor artifact, not a real measurement."
         )
+
+    if args.skip_galaxies:
+        return
+
+    from run_analysis import REDSHIFT_CONFIGS
+    z_cfg = REDSHIFT_CONFIGS[10.5]
+    muv_thresholds = PointingConfig().thresholds  # [-19.5, -20.0, -20.5]
+
+    models = {"fiducial": (z_cfg.muv_fiducial_path, args.n_realizations),
+              "stochastic": (z_cfg.muv_stochastic_path, args.n_realizations)}
+    if args.include_prejwst:
+        from run_cosmic_variance import PREJWST_MUV_PATH, PREJWST_N_REALIZATIONS
+        models["prejwst"] = (PREJWST_MUV_PATH, PREJWST_N_REALIZATIONS)
+
+    print(
+        f"\nGalaxy bias, *same* whole-box {cell_side:.1f} Mpc cells and same "
+        f"sigma_DM_linear = {sigma_dm:.5f} as the halo table above "
+        "(no analytic b_Tinker equivalent for an M_UV cut -- this is just "
+        "b_empirical, directly comparable to the halo b_empirical column, "
+        "NOT to b_Tinker):\n"
+    )
+    header2 = f"  {'model':<12} {'M_UV':>6} {'<N>/cell':>9} {'b_empirical':>12}"
+    print(header2)
+    print("  " + "-" * (len(header2) - 2))
+    for model, (muv_path, n_real) in models.items():
+        pool_gal = count_cells_by_muv(halo_coords, muv_path, n_real, muv_thresholds, args.n_per_side, BOX_LEN_MPC)
+        mean_gal, mean_sq_gal = pool_moments(pool_gal)
+        sigma_cv_gal = np.sqrt(fractional_cosmic_variance(mean_gal, mean_sq_gal))
+        for k, threshold in enumerate(muv_thresholds):
+            b_emp_gal = sigma_cv_gal[k] / sigma_dm
+            print(f"  {model:<12} {threshold:>6.1f} {mean_gal[k]:>9.3f} {b_emp_gal:>12.3f}")
 
 
 if __name__ == "__main__":
