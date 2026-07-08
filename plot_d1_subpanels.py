@@ -90,7 +90,7 @@ plt.rcParams.update({"font.size": 13, "xtick.top": True, "ytick.right": True,
 fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), sharey=True)
 
 # --- Panel 1: vary Muv,lim ---
-ax = axes[0]
+ax = axes[1]
 FAINT_KEYS = ["M17.5", "M18.5", "M19.5"]
 FAINT_LABS = [r"$M_{\rm UV,lim}=-17.5$",
               r"$M_{\rm UV,lim}=-18.5$",
@@ -112,7 +112,7 @@ style_ax(ax, r"Varying $M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.
          show_ylabel=True)
 
 # --- Panel 2: vary Muv,0 ---
-ax = axes[1]
+ax = axes[0]
 BRIGHT_KEYS = ["M21", "M21.5", "M22"]
 BRIGHT_LABS = [r"$M_{\rm UV,0}=-21.0$",
                r"$M_{\rm UV,0}=-21.5$",
