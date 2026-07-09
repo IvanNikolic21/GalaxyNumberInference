@@ -351,6 +351,191 @@ def bootstrap_fractional_cosmic_variance(pool: np.ndarray, cfg: PointingConfig) 
     return sigma_cv2
 
 
+def bootstrap_group_totals(
+    pool: np.ndarray,
+    cfg: PointingConfig,
+    group_size: Optional[int] = None,
+    with_replacement: bool = False,
+) -> np.ndarray:
+    """Bootstrap the total (summed) galaxy count over groups of pointings.
+
+    Companion to `bootstrap_group_stats`: that function returns each trial's
+    per-pointing mean/variance, but "did this survey detect >= k galaxies"
+    depends on the group *total*, not the per-pointing mean. Each trial draws
+    `group_size` distinct pointings (without replacement within a trial, by
+    default) from `pool` -- mimicking one hypothetical survey made of that
+    many pointings -- and sums their counts per threshold.
+
+    Parameters
+    ----------
+    pool : np.ndarray, shape (n_pool, n_thresholds)
+    cfg : PointingConfig
+        Uses cfg.n_trials and cfg.seed; `group_size` below overrides
+        cfg.group_size so callers can sweep group sizes without constructing
+        a new PointingConfig each time.
+    group_size : int, optional
+        Number of pointings per trial. Defaults to cfg.group_size.
+    with_replacement : bool
+        If True, sample pointings with replacement (needed once `group_size`
+        exceeds the pool size). Reusing the same pointing within a trial
+        understates that trial's true survey-to-survey scatter, so prefer
+        growing the pool (more realizations / smaller footprint) over
+        setting this when possible.
+
+    Returns
+    -------
+    totals : np.ndarray, shape (cfg.n_trials, n_thresholds)
+    """
+    n_pool, n_thresholds = pool.shape
+    gsize = cfg.group_size if group_size is None else group_size
+    if gsize > n_pool and not with_replacement:
+        raise ValueError(
+            f"group_size ({gsize}) exceeds pool size ({n_pool}) -- "
+            "use more realizations, a smaller footprint, or set "
+            "with_replacement=True."
+        )
+
+    rng = np.random.default_rng(cfg.seed)
+    totals = np.empty((cfg.n_trials, n_thresholds))
+    for t in range(cfg.n_trials):
+        idx = rng.choice(n_pool, size=gsize, replace=with_replacement)
+        totals[t] = pool[idx].sum(axis=0)
+    return totals
+
+
+def required_area_for_target_count(
+    pool: np.ndarray,
+    cfg: PointingConfig,
+    threshold_idx: int,
+    target_count: int,
+    confidence: float,
+    area_grid_arcmin2: np.ndarray,
+) -> dict:
+    """Find the smallest survey area giving >= `confidence` probability of
+    detecting >= `target_count` galaxies brighter than one M_UV threshold.
+
+    For each candidate area in `area_grid_arcmin2`, converts it to an
+    (integer) number of `cfg.fov_area_arcmin2`-sized pointings, bootstraps
+    `cfg.n_trials` mock surveys of that many pointings (see
+    `bootstrap_group_totals`), and records the fraction of trials with a
+    total count >= `target_count`. This directly answers "if I survey this
+    much area, how likely am I to see at least `target_count` galaxies",
+    combining Poisson shot noise and cosmic (field-to-field) variance --
+    unlike a mean-count-only calculation (e.g. `run_ks.py`'s
+    `compute_required_survey_area`), which only targets <N> and says
+    nothing about the probability of under- or over-shooting it.
+
+    Parameters
+    ----------
+    pool : np.ndarray, shape (n_pool, n_thresholds)
+        From `build_pointing_pool`, tiled at `cfg.fov_area_arcmin2` per
+        pointing. Use a small (e.g. NIRCam-sized) footprint here even if
+        `target_count`'s survey area is much larger -- see module docstring;
+        a single giant footprint can't sample real spatial cosmic variance.
+    cfg : PointingConfig
+        `cfg.thresholds[threshold_idx]` is the M_UV threshold being tested;
+        `cfg.n_trials` sets the bootstrap size per area point.
+    threshold_idx : int
+        Index into `cfg.thresholds` / `pool`'s second axis for the M_UV cut
+        of interest.
+    target_count : int
+        The count you want to detect (e.g. 5).
+    confidence : float
+        Target probability, e.g. 0.9.
+    area_grid_arcmin2 : np.ndarray
+        Candidate total survey areas [arcmin^2] to test, in increasing
+        order. Converted to `group_size = round(area / cfg.fov_area_arcmin2)`;
+        duplicate group_sizes (from close-together areas) are only
+        evaluated once, sharing the result.
+
+    Returns
+    -------
+    result : dict with keys:
+        "area_arcmin2" : np.ndarray -- the input area grid.
+        "group_size" : np.ndarray[int] -- pointings per area.
+        "prob_at_least" : np.ndarray -- bootstrap P(total >= target_count) per area.
+        "required_area_arcmin2" : float or None -- smallest tested area
+            reaching `confidence`; None if no area in the grid reached it
+            (extend area_grid_arcmin2 upward and retry).
+        "required_area_deg2" : float or None -- same, in deg^2.
+    """
+    n_pool = pool.shape[0]
+    area_grid_arcmin2 = np.asarray(area_grid_arcmin2, dtype=float)
+    group_sizes = np.round(area_grid_arcmin2 / cfg.fov_area_arcmin2).astype(int)
+
+    prob_at_least = np.empty(len(area_grid_arcmin2))
+    cache: dict[int, float] = {}
+
+    for i, gsize in enumerate(group_sizes):
+        gsize = int(gsize)
+        if gsize < 1:
+            raise ValueError(
+                f"area_grid_arcmin2[{i}]={area_grid_arcmin2[i]:.2f} arcmin^2 is "
+                f"smaller than one pointing ({cfg.fov_area_arcmin2:.2f} arcmin^2)."
+            )
+        if gsize in cache:
+            prob_at_least[i] = cache[gsize]
+            continue
+
+        with_replacement = gsize > n_pool
+        if with_replacement:
+            log.warning(
+                f"group_size={gsize} exceeds pool size ({n_pool}) for area="
+                f"{area_grid_arcmin2[i]:.1f} arcmin^2 -- bootstrapping WITH "
+                "replacement for this area (some pointings reused within a "
+                "trial). Increase n_realizations for an unbiased estimate at "
+                "this area."
+            )
+        trial_cfg = PointingConfig(
+            box_len_mpc=cfg.box_len_mpc,
+            fov_area_arcmin2=cfg.fov_area_arcmin2,
+            thresholds=cfg.thresholds,
+            group_size=gsize,
+            n_trials=cfg.n_trials,
+            los_axis=cfg.los_axis,
+            seed=cfg.seed + i,
+        )
+        totals = bootstrap_group_totals(pool, trial_cfg, with_replacement=with_replacement)
+        p = float(np.mean(totals[:, threshold_idx] >= target_count))
+        cache[gsize] = p
+        prob_at_least[i] = p
+
+    reached = np.where(prob_at_least >= confidence)[0]
+    required_area = float(area_grid_arcmin2[reached[0]]) if len(reached) else None
+
+    return {
+        "area_arcmin2": area_grid_arcmin2,
+        "group_size": group_sizes,
+        "prob_at_least": prob_at_least,
+        "required_area_arcmin2": required_area,
+        "required_area_deg2": (required_area / 3600.0) if required_area is not None else None,
+    }
+
+
+def summarize_required_area(result: dict, target_count: int, confidence: float) -> str:
+    """Format the area-sweep table produced by `required_area_for_target_count`."""
+    header_p = f"P(N>={target_count})"
+    lines = [
+        f"  Target: P(N >= {target_count}) >= {confidence:.0%}",
+        f"  {'Area [arcmin^2]':>16}  {'Area [deg^2]':>13}  {'group_size':>10}  {header_p:>12}",
+        f"  {'-' * 58}",
+    ]
+    for area, gsize, p in zip(result["area_arcmin2"], result["group_size"], result["prob_at_least"]):
+        marker = "  <-- reached" if p >= confidence else ""
+        lines.append(f"  {area:>16.1f}  {area / 3600:>13.4f}  {gsize:>10d}  {p:>12.3f}{marker}")
+    if result["required_area_arcmin2"] is not None:
+        lines.append(
+            f"\n  Required area: {result['required_area_arcmin2']:.1f} arcmin^2 "
+            f"({result['required_area_deg2']:.4f} deg^2)"
+        )
+    else:
+        lines.append(
+            "\n  Required area: not reached within the tested grid -- extend "
+            "area_grid_arcmin2 upward."
+        )
+    return "\n".join(lines)
+
+
 def pool_moments(pool: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """First and second raw moments of counts per threshold, over the full pool.
 
