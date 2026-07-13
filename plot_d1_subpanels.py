@@ -158,13 +158,13 @@ legend_stoc = [Patch(color=c, label=lab) for c, lab in zip(colors_stoc, Z_LABS)]
 import matplotlib.patches as mpatches
 
 param_labels = [
+    [r"$-21.0$", r"$-21.5$", r"$-22.0$"],  # panel 1: Muv,0
     [r"$-17.5$", r"$-18.5$", r"$-19.5$"],   # panel 0: Muv,lim
-    [r"$-21.0$", r"$-21.5$", r"$-22.0$"],    # panel 1: Muv,0
     [r"$8$",     r"$12$",    r"$14$"],        # panel 2: z
 ]
 param_xlabels = [
-    r"$M_{\rm UV,lim}=$",
     r"$M_{\rm UV,0}=$",
+    r"$M_{\rm UV,lim}=$",
     r"         $z=$",
 ]
 shifts = [-0.03, -0.03, +0.01]
