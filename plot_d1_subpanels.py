@@ -125,8 +125,12 @@ BRIGHT_LABS = [r"$M_{\rm UV,0}=-21.0$",
 FKEY = "M18.5"
 
 for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
-    plot_kde(ax, fid_105[bkey][FKEY],  colors_fid[i], bw = 0.3)
-    plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i], bw = 0.3)
+    if bkey == "M22":
+        plot_kde(ax, fid_105[bkey][FKEY], colors_fid[i], bw=0.4)
+        plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i], bw=0.3)
+    else:
+        plot_kde(ax, fid_105[bkey][FKEY],  colors_fid[i], bw = 0.3)
+        plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i], bw = 0.3)
 
 style_ax(ax, r"Varying $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 
