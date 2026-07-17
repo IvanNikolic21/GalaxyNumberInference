@@ -99,8 +99,8 @@ FAINT_LABS = [r"$M_{\rm UV,lim}=-17.5$",
 BKEY = "M21.5"
 
 for i, (fkey, lab) in enumerate(zip(FAINT_KEYS, FAINT_LABS)):
-    plot_kde(ax, fid_105[BKEY][fkey],  colors_fid[i],  label=lab if i == 0 else None)
-    plot_kde(ax, stoc_105[BKEY][fkey], colors_stoc[i])
+    plot_kde(ax, fid_105[BKEY][fkey],  colors_fid[i],  label=lab if i == 0 else None, bw=0.25)
+    plot_kde(ax, stoc_105[BKEY][fkey], colors_stoc[i], bw=0.25)
 
 # Custom legend showing both models + parameter variation
 from matplotlib.lines import Line2D
@@ -121,8 +121,8 @@ BRIGHT_LABS = [r"$M_{\rm UV,0}=-21.0$",
 FKEY = "M18.5"
 
 for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
-    plot_kde(ax, fid_105[bkey][FKEY],  colors_fid[i])
-    plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i])
+    plot_kde(ax, fid_105[bkey][FKEY],  colors_fid[i], bw = 0.25)
+    plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i], bw = 0.25)
 
 style_ax(ax, r"Varying $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$")
 
