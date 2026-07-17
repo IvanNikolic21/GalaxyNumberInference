@@ -68,7 +68,8 @@ def plot_kde(ax, arr, color, label=None, lw=2.5, bw=0.2):
         pass
 
 def style_ax(ax, title, show_ylabel=False):
-    ax.set_xlim(0, 8)
+    ax.set_xlim(0.5, 4)
+    ax.set_xscale('log')
     ax.set_ylim(0, 1.7)
     ax.set_xlabel(r"$d_1$ [cMpc]", fontsize=13)
     if show_ylabel:
