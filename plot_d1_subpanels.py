@@ -109,8 +109,7 @@ legend_elements = (
     [Line2D([0], [0], color='gray', lw=2.5, ls='-',  label='intrinsically bright'),
      Line2D([0], [0], color='gray', lw=2.5, ls='--', label='increased stochasticity')]
 )
-style_ax(ax, r"Varying $M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$",
-         show_ylabel=True)
+style_ax(ax, r"Varying $M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
 
 # --- Panel 2: vary Muv,0 ---
 ax = axes[0]
@@ -124,7 +123,7 @@ for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
     plot_kde(ax, fid_105[bkey][FKEY],  colors_fid[i], bw = 0.25)
     plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i], bw = 0.25)
 
-style_ax(ax, r"Varying $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$")
+style_ax(ax, r"Varying $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 
 # --- Panel 3: vary z ---
 ax = axes[2]
