@@ -14,6 +14,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 from pathlib import Path
+from matplotlib.ticker import FixedLocator, FixedFormatter
 
 from galaxy_neighbors import AnalysisConfig
 from galaxy_d1s import load_d1s, D1sConfig
@@ -75,6 +76,10 @@ def style_ax(ax, title, show_ylabel=False):
     if show_ylabel:
         ax.set_ylabel(r"PDF$(d_1)$", fontsize=13)
     ax.set_title(title, fontsize=13)
+    ticks = [0.6, 1, 2, 3, 4]
+    ax.xaxis.set_major_locator(FixedLocator(ticks))
+    ax.xaxis.set_major_formatter(FixedFormatter(['0.6', '1', '2', '3', '4']))
+
 
 # ---------------------------------------------------------------------------
 # Load z=10.5 once — used in panels 1 and 2
@@ -99,8 +104,8 @@ FAINT_LABS = [r"$M_{\rm UV,lim}=-17.5$",
 BKEY = "M21.5"
 
 for i, (fkey, lab) in enumerate(zip(FAINT_KEYS, FAINT_LABS)):
-    plot_kde(ax, fid_105[BKEY][fkey],  colors_fid[i],  label=lab if i == 0 else None, bw=0.25)
-    plot_kde(ax, stoc_105[BKEY][fkey], colors_stoc[i], bw=0.25)
+    plot_kde(ax, fid_105[BKEY][fkey],  colors_fid[i],  label=lab if i == 0 else None, bw=0.3)
+    plot_kde(ax, stoc_105[BKEY][fkey], colors_stoc[i], bw=0.3)
 
 # Custom legend showing both models + parameter variation
 from matplotlib.lines import Line2D
@@ -120,8 +125,8 @@ BRIGHT_LABS = [r"$M_{\rm UV,0}=-21.0$",
 FKEY = "M18.5"
 
 for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
-    plot_kde(ax, fid_105[bkey][FKEY],  colors_fid[i], bw = 0.25)
-    plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i], bw = 0.25)
+    plot_kde(ax, fid_105[bkey][FKEY],  colors_fid[i], bw = 0.3)
+    plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i], bw = 0.3)
 
 style_ax(ax, r"Varying $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 
