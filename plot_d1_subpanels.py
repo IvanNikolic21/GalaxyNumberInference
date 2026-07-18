@@ -69,16 +69,16 @@ def plot_kde(ax, arr, color, label=None, lw=2.5, bw=0.2):
         pass
 
 def style_ax(ax, title, show_ylabel=False):
-    ax.set_xlim(0.5, 4)
-    ax.set_xscale('log')
+    ax.set_xlim(0.1, 4)
+    #ax.set_xscale('log')
     ax.set_ylim(0, 1.7)
     ax.set_xlabel(r"$d_1$ [cMpc]", fontsize=13)
     if show_ylabel:
         ax.set_ylabel(r"PDF$(d_1)$", fontsize=13)
     ax.set_title(title, fontsize=13)
-    ticks = [0.6, 1, 2, 3, 4]
-    ax.xaxis.set_major_locator(FixedLocator(ticks))
-    ax.xaxis.set_major_formatter(FixedFormatter(['0.6', '1', '2', '3', '4']))
+    # ticks = [0.6, 1, 2, 3, 4]
+    # ax.xaxis.set_major_locator(FixedLocator(ticks))
+    # ax.xaxis.set_major_formatter(FixedFormatter(['0.6', '1', '2', '3', '4']))
 
 
 # ---------------------------------------------------------------------------
