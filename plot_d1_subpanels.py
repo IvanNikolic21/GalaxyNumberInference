@@ -153,7 +153,7 @@ for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
 
 style_ax(ax, r"Varying $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 # Shared model-color legend lives on this panel only.
-model_leg = add_model_legend(ax, loc='upper left')
+model_leg = add_model_legend(ax)
 ax.add_artist(model_leg)
 add_param_legend(ax, BRIGHT_LABS)
 
