@@ -54,8 +54,8 @@ CACHE = {
 # ---------------------------------------------------------------------------
 # Colors — one per model, shared across all panels
 # ---------------------------------------------------------------------------
-COLOR_FID  = '#d94701'
-COLOR_STOC = '#2171b5'
+COLOR_FID  = '#fd8d3c'
+COLOR_STOC = '#08519c'
 
 # Linestyles — one per varying-parameter value within a panel. The mapping
 # (1st value = solid, 2nd = dashed, 3rd = dotted) is reused by all three
