@@ -45,8 +45,8 @@ REDSHIFT_CONFIGS = {
     8.0: RedshiftConfig(
         redshift=8.0,
         halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/8.0000/HaloCatalog.h5"),
-        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8n_rec3.h5"),
-        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8n_rec3.h5"),
+        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8n.h5"),
+        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8n.h5"),
     ),
     10.5: RedshiftConfig(
         redshift=10.5,
@@ -71,7 +71,7 @@ REDSHIFT_CONFIGS = {
 # Sensible default number of realizations per redshift, reflecting catalog sizes.
 # Used in the SLURM script comments and as documentation — override via CLI as needed.
 DEFAULT_REALIZATIONS = {
-    8.0:  15,
+    8.0:  20,
     10.5: 100,    # has named files (new_save / new3) rather than a large stack
     12.0: 100,
     14.0: 400,
