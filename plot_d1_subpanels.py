@@ -7,7 +7,9 @@ One figure, three panels:
   Middle: vary Muv,0   = -21.0, -21.5, -22.0  (fixed Muv,lim=-18.5, z=10.5)
   Right:  vary z       = 8, 12, 14             (fixed Muv,0=-21.5, Muv,lim=-18.5)
 
-Color intensity encodes the varying parameter within each panel.
+Color encodes the model (intrinsically bright vs increased stochasticity,
+shared across all three panels); linestyle encodes the varying parameter
+within each panel.
 """
 
 import numpy as np
@@ -15,6 +17,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import gaussian_kde
 from pathlib import Path
 from matplotlib.ticker import FixedLocator, FixedFormatter
+from matplotlib.lines import Line2D
 
 from galaxy_neighbors import AnalysisConfig
 from galaxy_d1s import load_d1s, D1sConfig
@@ -49,24 +52,43 @@ CACHE = {
 }
 
 # ---------------------------------------------------------------------------
-# Colors — light to dark as parameter increases in magnitude
+# Colors — one per model, shared across all panels
 # ---------------------------------------------------------------------------
-colors_fid  = np.flip(['#d94701', '#fd8d3c', '#fdbe85'])
-colors_stoc = np.flip(['#2171b5', '#6baed6', '#bdd7e7'])
+COLOR_FID  = '#d94701'
+COLOR_STOC = '#2171b5'
+
+# Linestyles — one per varying-parameter value within a panel. The mapping
+# (1st value = solid, 2nd = dashed, 3rd = dotted) is reused by all three
+# panels, but each panel's own legend spells out what its values actually are.
+LINESTYLES = ['-', '--', ':']
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 x = np.linspace(0, 8, 300)
 
-def plot_kde(ax, arr, color, label=None, lw=2.5, bw=0.2):
+def plot_kde(ax, arr, color, label=None, lw=2.5, bw=0.2, ls='-'):
     if len(arr) < 2:
         return
     try:
         kde = gaussian_kde(arr, bw_method=bw)
-        ax.plot(x, kde(x), color=color, lw=lw, label=label)
+        ax.plot(x, kde(x), color=color, lw=lw, ls=ls, label=label)
     except Exception:
         pass
+
+def add_param_legend(ax, labels, loc='upper right'):
+    """Black-line legend mapping this panel's linestyles -> parameter values."""
+    handles = [Line2D([0], [0], color='black', lw=2, ls=ls, label=lab)
+               for ls, lab in zip(LINESTYLES, labels)]
+    return ax.legend(handles=handles, loc=loc, fontsize=9, frameon=False)
+
+def add_model_legend(ax, loc='upper left'):
+    """Color legend mapping model -> color, meant to be shown on one panel only."""
+    handles = [
+        Line2D([0], [0], color=COLOR_FID,  lw=2.5, label='intrinsically bright'),
+        Line2D([0], [0], color=COLOR_STOC, lw=2.5, label='increased stochasticity'),
+    ]
+    return ax.legend(handles=handles, loc=loc, fontsize=10, frameon=False)
 
 def style_ax(ax, title, show_ylabel=False):
     ax.set_xlim(0.1, 4)
@@ -104,17 +126,11 @@ FAINT_LABS = [r"$M_{\rm UV,lim}=-17.5$",
 BKEY = "M21.5"
 
 for i, (fkey, lab) in enumerate(zip(FAINT_KEYS, FAINT_LABS)):
-    plot_kde(ax, fid_105[BKEY][fkey],  colors_fid[i],  label=lab if i == 0 else None, bw=0.3)
-    plot_kde(ax, stoc_105[BKEY][fkey], colors_stoc[i], bw=0.3)
+    plot_kde(ax, fid_105[BKEY][fkey],  COLOR_FID,  bw=0.3, ls=LINESTYLES[i])
+    plot_kde(ax, stoc_105[BKEY][fkey], COLOR_STOC, bw=0.3, ls=LINESTYLES[i])
 
-# Custom legend showing both models + parameter variation
-from matplotlib.lines import Line2D
-legend_elements = (
-    [Line2D([0], [0], color=colors_fid[i],  lw=2.5, label=lab) for i, lab in enumerate(FAINT_LABS)] +
-    [Line2D([0], [0], color='gray', lw=2.5, ls='-',  label='intrinsically bright'),
-     Line2D([0], [0], color='gray', lw=2.5, ls='--', label='increased stochasticity')]
-)
 style_ax(ax, r"Varying $M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
+add_param_legend(ax, FAINT_LABS)
 
 # --- Panel 2: vary Muv,0 ---
 ax = axes[0]
@@ -126,13 +142,17 @@ FKEY = "M18.5"
 
 for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
     if bkey == "M22":
-        plot_kde(ax, fid_105[bkey][FKEY], colors_fid[i], bw=0.4)
-        plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i], bw=0.3)
+        plot_kde(ax, fid_105[bkey][FKEY], COLOR_FID,  bw=0.4, ls=LINESTYLES[i])
+        plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw=0.3, ls=LINESTYLES[i])
     else:
-        plot_kde(ax, fid_105[bkey][FKEY],  colors_fid[i], bw = 0.3)
-        plot_kde(ax, stoc_105[bkey][FKEY], colors_stoc[i], bw = 0.3)
+        plot_kde(ax, fid_105[bkey][FKEY],  COLOR_FID,  bw = 0.3, ls=LINESTYLES[i])
+        plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw = 0.3, ls=LINESTYLES[i])
 
 style_ax(ax, r"Varying $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
+# Shared model-color legend lives on this panel only.
+model_leg = add_model_legend(ax, loc='upper left')
+ax.add_artist(model_leg)
+add_param_legend(ax, BRIGHT_LABS)
 
 # --- Panel 3: vary z ---
 ax = axes[2]
@@ -152,64 +172,12 @@ for i, (z, zlab) in enumerate(zip(REDSHIFTS, Z_LABS)):
     else:
         BW_FID = 0.15
         BW_STOC = 0.15
-    plot_kde(ax, fid_z[BKEY][FKEY],  colors_fid[i],  label=zlab, bw = BW_FID)
-    plot_kde(ax, stoc_z[BKEY][FKEY], colors_stoc[i], bw = BW_STOC)
+    plot_kde(ax, fid_z[BKEY][FKEY],  COLOR_FID,  bw = BW_FID, ls=LINESTYLES[i])
+    plot_kde(ax, stoc_z[BKEY][FKEY], COLOR_STOC, bw = BW_STOC, ls=LINESTYLES[i])
 
 style_ax(ax, r"Varying $z$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$")
+add_param_legend(ax, Z_LABS)
 
-# --- Shared legend ---
-# One legend for all panels: color = parameter value, solid = fid, dashed = stoc
-# Add dashed versions for stoc on panel 3
-from matplotlib.patches import Patch
-legend_fid  = [Patch(color=c, label=lab) for c, lab in zip(colors_fid,  Z_LABS)]
-legend_stoc = [Patch(color=c, label=lab) for c, lab in zip(colors_stoc, Z_LABS)]
-
-import matplotlib.patches as mpatches
-
-param_labels = [
-    [r"$-21.0$", r"$-21.5$", r"$-22.0$"],  # panel 1: Muv,0
-    [r"$-17.5$", r"$-18.5$", r"$-19.5$"],   # panel 0: Muv,lim
-    [r"$8$",     r"$12$",    r"$14$"],        # panel 2: z
-]
-param_xlabels = [
-    r"$M_{\rm UV,0}=$",
-    r"$M_{\rm UV,lim}=$",
-    r"         $z=$",
-]
-shifts = [-0.03, -0.03, +0.01]
-for index_ax, (ax, plabs, pxlab) in enumerate(zip(axes, param_labels, param_xlabels)):
-    x0, y0 = 0.35, 0.9
-    dx = 0.13
-
-    # Fiducial row
-    for i, c in enumerate(colors_fid):
-        rect = mpatches.Rectangle(
-            (x0 + i*dx, y0 - 0.03), 0.04, 0.02,
-            transform=ax.transAxes, facecolor=c, edgecolor='none'
-        )
-        ax.add_patch(rect)
-    ax.text(x0 + 3*dx -0.05 , y0 - 0.04, 'high\nluminosity',
-            fontsize=12, transform=ax.transAxes)
-
-    # Stochastic row
-    for i, c in enumerate(colors_stoc):
-        rect = mpatches.Rectangle(
-            (x0 + i*dx, y0 - 0.15), 0.04, 0.02,
-            transform=ax.transAxes, facecolor=c, edgecolor='none'
-        )
-        ax.add_patch(rect)
-    ax.text(x0 + 3*dx -0.05, y0 - 0.18, 'high\nstochasticity',
-            fontsize=12, transform=ax.transAxes)
-
-    # Parameter value labels
-    ax.text(x0 - 0.225, y0 - 0.235, pxlab, fontsize=11, transform=ax.transAxes)
-    for i, lab in enumerate(plabs):
-        ax.text(x0 + i*dx -0.01 +shifts[index_ax], y0 - 0.23, lab, fontsize=9, transform=ax.transAxes)
-
-# Global note on line meaning
-# fig.text(0.5, -0.02,
-#          "Solid = intrinsically bright,  Dashed = increased stochasticity  [dashed not shown — colors match]",
-#          ha='center', fontsize=10, style='italic')
 fig.subplots_adjust(wspace=0.04, hspace=0.04)
 
 #fig.tight_layout()
