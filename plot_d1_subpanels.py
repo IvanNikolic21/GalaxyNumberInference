@@ -57,10 +57,12 @@ CACHE = {
 COLOR_FID  = '#fd8d3c'
 COLOR_STOC = '#08519c'
 
-# Linestyles — one per varying-parameter value within a panel. The mapping
-# (1st value = solid, 2nd = dashed, 3rd = dotted) is reused by all three
-# panels, but each panel's own legend spells out what its values actually are.
+# Linestyles — one per varying-parameter value within a panel. Each panel
+# uses LINESTYLES_REV (reversed) so that its most extreme value -- the one
+# expected to show the clearest fiducial/stochastic difference -- gets the
+# solid line, since solid draws the eye first.
 LINESTYLES = ['-', '--', ':']
+LINESTYLES_REV = LINESTYLES[::-1]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -76,24 +78,25 @@ def plot_kde(ax, arr, color, label=None, lw=2.5, bw=0.2, ls='-'):
     except Exception:
         pass
 
-def add_param_legend(ax, labels, loc='upper right'):
+def add_param_legend(ax, labels, linestyles=None, loc='upper right'):
     """Black-line legend mapping this panel's linestyles -> parameter values."""
-    handles = [Line2D([0], [0], color='black', lw=2, ls=ls, label=lab)
-               for ls, lab in zip(LINESTYLES, labels)]
-    return ax.legend(handles=handles, loc=loc, fontsize=9, frameon=False)
+    ls_list = LINESTYLES_REV if linestyles is None else linestyles
+    handles = [Line2D([0], [0], color='black', lw=2.5, ls=ls, label=lab)
+               for ls, lab in zip(ls_list, labels)]
+    return ax.legend(handles=handles, loc=loc, fontsize=12, frameon=False, handlelength=3)
 
 def add_model_legend(ax, loc='upper left'):
     """Color legend mapping model -> color, meant to be shown on one panel only."""
     handles = [
-        Line2D([0], [0], color=COLOR_FID,  lw=2.5, label='intrinsically bright'),
-        Line2D([0], [0], color=COLOR_STOC, lw=2.5, label='increased stochasticity'),
+        Line2D([0], [0], color=COLOR_FID,  lw=3, label='intrinsically bright'),
+        Line2D([0], [0], color=COLOR_STOC, lw=3, label='increased stochasticity'),
     ]
-    return ax.legend(handles=handles, loc=loc, fontsize=10, frameon=False)
+    return ax.legend(handles=handles, loc=loc, fontsize=13, frameon=False, handlelength=2.5)
 
 def style_ax(ax, title, show_ylabel=False):
     ax.set_xlim(0.1, 4)
     #ax.set_xscale('log')
-    ax.set_ylim(0, 1.7)
+    ax.set_ylim(0, 1.4)
     ax.set_xlabel(r"$d_1$ [cMpc]", fontsize=13)
     if show_ylabel:
         ax.set_ylabel(r"PDF$(d_1)$", fontsize=13)
@@ -126,8 +129,8 @@ FAINT_LABS = [r"$M_{\rm UV,lim}=-17.5$",
 BKEY = "M21.5"
 
 for i, (fkey, lab) in enumerate(zip(FAINT_KEYS, FAINT_LABS)):
-    plot_kde(ax, fid_105[BKEY][fkey],  COLOR_FID,  bw=0.3, ls=LINESTYLES[i])
-    plot_kde(ax, stoc_105[BKEY][fkey], COLOR_STOC, bw=0.3, ls=LINESTYLES[i])
+    plot_kde(ax, fid_105[BKEY][fkey],  COLOR_FID,  bw=0.3, ls=LINESTYLES_REV[i])
+    plot_kde(ax, stoc_105[BKEY][fkey], COLOR_STOC, bw=0.3, ls=LINESTYLES_REV[i])
 
 style_ax(ax, r"Varying $M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
 add_param_legend(ax, FAINT_LABS)
@@ -142,11 +145,11 @@ FKEY = "M18.5"
 
 for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
     if bkey == "M22":
-        plot_kde(ax, fid_105[bkey][FKEY], COLOR_FID,  bw=0.4, ls=LINESTYLES[i])
-        plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw=0.3, ls=LINESTYLES[i])
+        plot_kde(ax, fid_105[bkey][FKEY], COLOR_FID,  bw=0.4, ls=LINESTYLES_REV[i])
+        plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw=0.3, ls=LINESTYLES_REV[i])
     else:
-        plot_kde(ax, fid_105[bkey][FKEY],  COLOR_FID,  bw = 0.3, ls=LINESTYLES[i])
-        plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw = 0.3, ls=LINESTYLES[i])
+        plot_kde(ax, fid_105[bkey][FKEY],  COLOR_FID,  bw = 0.3, ls=LINESTYLES_REV[i])
+        plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw = 0.3, ls=LINESTYLES_REV[i])
 
 style_ax(ax, r"Varying $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 # Shared model-color legend lives on this panel only.
@@ -172,8 +175,8 @@ for i, (z, zlab) in enumerate(zip(REDSHIFTS, Z_LABS)):
     else:
         BW_FID = 0.15
         BW_STOC = 0.15
-    plot_kde(ax, fid_z[BKEY][FKEY],  COLOR_FID,  bw = BW_FID, ls=LINESTYLES[i])
-    plot_kde(ax, stoc_z[BKEY][FKEY], COLOR_STOC, bw = BW_STOC, ls=LINESTYLES[i])
+    plot_kde(ax, fid_z[BKEY][FKEY],  COLOR_FID,  bw = BW_FID, ls=LINESTYLES_REV[i])
+    plot_kde(ax, stoc_z[BKEY][FKEY], COLOR_STOC, bw = BW_STOC, ls=LINESTYLES_REV[i])
 
 style_ax(ax, r"Varying $z$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$")
 add_param_legend(ax, Z_LABS)
