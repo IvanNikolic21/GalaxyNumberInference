@@ -46,7 +46,7 @@ REDSHIFT_CONFIGS = {
         muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14_800_ns.h5")),
 }
 
-N_REALIZATIONS = {8.0:7, 10.5:20, 12.0: 100, 14.0: 200}
+N_REALIZATIONS = {8.0:2, 10.5:20, 12.0: 100, 14.0: 200}
 
 CACHE_ROOT  = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 KS_ROOT     = Path("/groups/astro/ivannik/projects/Neighbors/ks_results")
@@ -54,7 +54,7 @@ OUTPUT_ROOT = Path("/groups/astro/ivannik/projects/Neighbors/plots")
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 D1S_FILES = {
-    8.0: CACHE_ROOT / "z8.0" / "d1s_fiducial_real7.npz",
+    8.0: CACHE_ROOT / "z8.0" / "d1s_fiducial_real2.npz",
     10.5: CACHE_ROOT / "z10.5" / "d1s_fiducial_real20.npz",
     12.0: CACHE_ROOT / "z12.0" / "d1s_fiducial_real100.npz",
     14.0: CACHE_ROOT / "z14.0" / "d1s_fiducial_real200.npz",
