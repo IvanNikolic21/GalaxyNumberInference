@@ -178,7 +178,7 @@ for i, (z, zlab) in enumerate(zip(REDSHIFTS, Z_LABS)):
     plot_kde(ax, fid_z[BKEY][FKEY],  COLOR_FID,  bw = BW_FID, ls=LINESTYLES[i])
     plot_kde(ax, stoc_z[BKEY][FKEY], COLOR_STOC, bw = BW_STOC, ls=LINESTYLES[i])
 
-style_ax(ax, r"Varying $z$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$")
+style_ax(ax, r"Varying redshift, $z$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$")
 add_param_legend(ax, Z_LABS, linestyles=LINESTYLES)
 
 fig.subplots_adjust(wspace=0.04, hspace=0.04)
