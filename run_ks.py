@@ -46,8 +46,8 @@ CACHE_ROOT = Path("/groups/astro/ivannik/projects/Neighbors/cache")
 
 CACHE_FILES = {
     8.0:  (
-        CACHE_ROOT / "z8.0"  / "d1s_fiducial_real2.npz",
-        CACHE_ROOT / "z8.0"  / "d1s_stochastic_real2.npz",
+        CACHE_ROOT / "z8.0"  / "d1s_fiducial_real1.npz",
+        CACHE_ROOT / "z8.0"  / "d1s_stochastic_real1.npz",
     ),
     10.5: (
         CACHE_ROOT / "z10.5" / "d1s_fiducial_real20.npz",
