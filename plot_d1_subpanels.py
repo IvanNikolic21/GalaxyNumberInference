@@ -83,7 +83,7 @@ def add_param_legend(ax, labels, linestyles=None, loc='center right'):
     ls_list = LINESTYLES_REV if linestyles is None else linestyles
     handles = [Line2D([0], [0], color='black', lw=2.5, ls=ls, label=lab)
                for ls, lab in zip(ls_list, labels)]
-    return ax.legend(handles=handles, loc=loc, fontsize=14, frameon=False, handlelength=2)
+    return ax.legend(handles=handles, loc=loc, fontsize=14, frameon=False, handlelength=1.5)
 
 def add_model_legend(ax, loc='upper right'):
     """Color legend mapping model -> color, meant to be shown on one panel only."""
@@ -132,8 +132,8 @@ for i, (fkey, lab) in enumerate(zip(FAINT_KEYS, FAINT_LABS)):
     plot_kde(ax, fid_105[BKEY][fkey],  COLOR_FID,  bw=0.3, ls=LINESTYLES[i])
     plot_kde(ax, stoc_105[BKEY][fkey], COLOR_STOC, bw=0.3, ls=LINESTYLES[i])
 
-style_ax(ax, "Varying UV magnitude of photometric neighbors" + r"$M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
-add_param_legend(ax, FAINT_LABS)
+style_ax(ax, "Varying UV magnitude of photometric \nneighbors" + r"$M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
+add_param_legend(ax, FAINT_LABS, linestyles=LINESTYLES)
 
 # --- Panel 2: vary Muv,0 ---
 ax = axes[0]
@@ -151,11 +151,11 @@ for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
         plot_kde(ax, fid_105[bkey][FKEY],  COLOR_FID,  bw = 0.3, ls=LINESTYLES[i])
         plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw = 0.3, ls=LINESTYLES[i])
 
-style_ax(ax, r"Varying UV magnitude of the bright galaxy, $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
+style_ax(ax, r"Varying UV magnitude of the bright \ngalaxy, $M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 # Shared model-color legend lives on this panel only.
 model_leg = add_model_legend(ax)
 ax.add_artist(model_leg)
-add_param_legend(ax, BRIGHT_LABS)
+add_param_legend(ax, BRIGHT_LABS, linestyles=LINESTYLES)
 
 # --- Panel 3: vary z ---
 ax = axes[2]
@@ -179,7 +179,7 @@ for i, (z, zlab) in enumerate(zip(REDSHIFTS, Z_LABS)):
     plot_kde(ax, stoc_z[BKEY][FKEY], COLOR_STOC, bw = BW_STOC, ls=LINESTYLES[i])
 
 style_ax(ax, r"Varying $z$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$")
-add_param_legend(ax, Z_LABS)
+add_param_legend(ax, Z_LABS, linestyles=LINESTYLES)
 
 fig.subplots_adjust(wspace=0.04, hspace=0.04)
 
