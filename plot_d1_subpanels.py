@@ -151,7 +151,7 @@ for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
         plot_kde(ax, fid_105[bkey][FKEY],  COLOR_FID,  bw = 0.3, ls=LINESTYLES[i])
         plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw = 0.3, ls=LINESTYLES[i])
 
-style_ax(ax, "Varying UV magnitude of the bright \ngalaxy, "+"$M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
+style_ax(ax, "Varying UV magnitude of the bright \ngalaxy, "+r"$M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 # Shared model-color legend lives on this panel only.
 model_leg = add_model_legend(ax)
 ax.add_artist(model_leg)
