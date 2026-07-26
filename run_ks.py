@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 
 from astropy.cosmology import Planck18 as cosmo
 from astropy import units as u
+from scipy.stats import chi2
 
 from galaxy_neighbors import AnalysisConfig, RedshiftConfig, compute_bright_counts, load_muv_catalog
 from galaxy_d1s import load_d1s
@@ -113,30 +114,23 @@ def get_LF(Muv, n_realizations=1, BOX_LEN=_BOX_LEN_MPC):
     return bin_centers, ndens
 
 
-def compute_required_survey_area(
-    n_pointings: np.ndarray,
+def _surface_density_arcmin2(
     bin_centers: np.ndarray,
     phi: np.ndarray,
     bright_limit: float,
     redshift: float,
     delta_z: float = 1.0,
-) -> np.ndarray:
-    """Survey area [arcmin²] needed to observe n_pointings bright galaxies.
+) -> float:
+    """Projected surface density [arcmin⁻²] of galaxies brighter than bright_limit.
 
     Integrates the UVLF brighter than bright_limit to get the comoving number
-    density, then converts to a projected surface density via the volume element
-    dV/dΩ/dz × Δz.  Area = N_pointings / surface_density.
-
-    n_pointings : bootstrap distribution of critical sample sizes (may have NaN)
-    bin_centers : UVLF magnitude bin centers [mag]
-    phi : UVLF [Mpc⁻³ mag⁻¹]
-    bright_limit : galaxies with M_UV < bright_limit are counted
-    redshift : central redshift of the survey slice
-    delta_z : redshift slice width (default 1.0)
+    density, then converts to a projected surface density via the volume
+    element dV/dΩ/dz × Δz. Shared by compute_required_survey_area (mean-count
+    estimate) and required_area_poisson (Poisson-confidence estimate).
     """
     bright_mask = bin_centers < bright_limit
     if not bright_mask.any():
-        return np.full(len(n_pointings), np.nan)
+        return np.nan
 
     n_bright = np.trapz(phi[bright_mask], bin_centers[bright_mask])  # Mpc⁻³
 
@@ -145,9 +139,94 @@ def compute_required_survey_area(
     dV_dOmega_dz = D_C**2 * (2.998e5 / H_z)                         # Mpc³ sr⁻¹
 
     arcmin2_per_sr = (180.0 * 60.0 / np.pi) ** 2
-    n_surf = n_bright * dV_dOmega_dz * delta_z / arcmin2_per_sr      # arcmin⁻²
+    return n_bright * dV_dOmega_dz * delta_z / arcmin2_per_sr        # arcmin⁻²
 
+
+def compute_required_survey_area(
+    n_pointings: np.ndarray,
+    bin_centers: np.ndarray,
+    phi: np.ndarray,
+    bright_limit: float,
+    redshift: float,
+    delta_z: float = 1.0,
+) -> np.ndarray:
+    """Survey area [arcmin²] needed to observe n_pointings bright galaxies *on average*.
+
+    Area = n_pointings / <surface density>. This only guarantees n_pointings
+    galaxies in the mean over many surveys of that area -- roughly half of
+    real surveys of that size will come up short, since it ignores Poisson
+    shot noise entirely. Use required_area_poisson for an area that reaches
+    a given detection probability instead of just matching the mean.
+
+    n_pointings : bootstrap distribution of critical sample sizes (may have NaN)
+    bin_centers : UVLF magnitude bin centers [mag]
+    phi : UVLF [Mpc⁻³ mag⁻¹]
+    bright_limit : galaxies with M_UV < bright_limit are counted
+    redshift : central redshift of the survey slice
+    delta_z : redshift slice width (default 1.0)
+    """
+    n_surf = _surface_density_arcmin2(bin_centers, phi, bright_limit, redshift, delta_z)
+    if not np.isfinite(n_surf) or n_surf <= 0:
+        return np.full(len(n_pointings), np.nan)
     return n_pointings / n_surf                                       # arcmin²
+
+
+def poisson_required_mean(target_count: np.ndarray, confidence: float) -> np.ndarray:
+    """Poisson mean λ such that P(N >= target_count) >= confidence.
+
+    Closed form via the standard Poisson/chi-squared identity
+        P(N >= k | λ) = 1 - poisson.cdf(k-1, λ) = chi2.sf(2λ, df=2k),
+    inverted at fixed confidence:
+        λ = 0.5 * chi2.ppf(confidence, df=2k).
+    This is the same identity behind tabulated Poisson confidence limits
+    (e.g. Gehrels 1986) -- exact, not a sqrt(N)/Gaussian approximation, and
+    needs no bootstrap or root-finding.
+
+    target_count : array of (possibly fractional) target counts k. Poisson
+        quantiles are only defined for integer k, so each value is rounded
+        up (np.ceil) before inversion -- i.e. a fractional target rounds to
+        the next integer requirement, the conservative direction.
+    confidence : desired P(N >= target_count), e.g. 0.68 or 0.95.
+    """
+    target_count = np.asarray(target_count, dtype=float)
+    k = np.ceil(target_count)
+    valid = np.isfinite(k) & (k >= 1)
+    lam = np.full_like(target_count, np.nan)
+    lam[valid] = 0.5 * chi2.ppf(confidence, df=2 * k[valid])
+    return lam
+
+
+def required_area_poisson(
+    target_count: np.ndarray,
+    bin_centers: np.ndarray,
+    phi: np.ndarray,
+    bright_limit: float,
+    redshift: float,
+    confidence: float,
+    delta_z: float = 1.0,
+) -> np.ndarray:
+    """Survey area [arcmin²] needed so P(N_observed >= target_count) >= confidence.
+
+    Unlike compute_required_survey_area (mean-count only), this accounts for
+    Poisson shot noise: the returned area is larger than the naive
+    target_count / <surface density> estimate by however much margin is
+    needed for a `confidence`-fraction of real surveys of that size to
+    actually detect at least target_count galaxies, not just match the mean.
+    This is the fix for the "predicted 0.6 deg^2 -> 5 galaxies, but a real
+    survey only found 2" mismatch: that comparison implicitly expected the
+    mean-count area to succeed every time, when by construction it only
+    succeeds ~half the time.
+
+    Does not include cosmic (field-to-field/clustering) variance on top of
+    Poisson shot noise -- see cosmic_variance.py / run_required_area.py for
+    that (bootstrap-based, built from real halo-catalog spatial clustering).
+    """
+    n_surf = _surface_density_arcmin2(bin_centers, phi, bright_limit, redshift, delta_z)
+    target_count = np.atleast_1d(np.asarray(target_count, dtype=float))
+    if not np.isfinite(n_surf) or n_surf <= 0:
+        return np.full(len(target_count), np.nan)
+    lam = poisson_required_mean(target_count, confidence)
+    return lam / n_surf
 
 
 def apply_p_neighbor_correction(results, d1s_fid, bright_counts, bright_key,
@@ -280,16 +359,23 @@ def main():
         print(f"bright_key={bright_key}  z={z}")
         print(summarise_ks(results, ks_cfg))
 
-        pct = ks_cfg.summary_percentile
         print(f"\nRequired survey area  (bright_key={bright_key}, z={z}, Δz=1.0, BOX_LEN={_BOX_LEN_MPC} Mpc)")
-        print(f"  {'faint_key':<12}  {'N_point med':>11}  {'Area med [arcmin²]':>20}  {'Area p'+str(int(pct))+' [arcmin²]':>20}")
+        print(f"  Area(mean) matches the target count only on average (~50% of surveys of that")
+        print(f"  size fall short); Area(68%)/Area(95%) additionally account for Poisson shot")
+        print(f"  noise, i.e. the area at which that fraction of real surveys actually detect")
+        print(f"  >= N_point galaxies (cosmic/clustering variance not included -- see")
+        print(f"  cosmic_variance.py for that).")
+        print(f"  {'faint_key':<12}  {'N_point med':>11}  {'Area(mean)':>12}  {'Area(68%)':>12}  {'Area(95%)':>12}")
         print(f"  {'-'*67}")
         for fkey in cfg.faint_names:
-            n_pt   = results_corrected[fkey]['ks']
-            areas  = compute_required_survey_area(n_pt, uvlf_bins, uvlf_phi, bright_limit, z)
+            n_pt      = results_corrected[fkey]['ks']
+            areas_mean = compute_required_survey_area(n_pt, uvlf_bins, uvlf_phi, bright_limit, z)
+            areas_68   = required_area_poisson(n_pt, uvlf_bins, uvlf_phi, bright_limit, z, confidence=0.68)
+            areas_95   = required_area_poisson(n_pt, uvlf_bins, uvlf_phi, bright_limit, z, confidence=0.95)
             print(f"  {fkey:<12}  {np.nanmedian(n_pt):>11.1f}  "
-                  f"{np.nanmedian(areas):>20.1f}  "
-                  f"{np.nanpercentile(areas, pct):>20.1f}")
+                  f"{np.nanmedian(areas_mean):>12.1f}  "
+                  f"{np.nanmedian(areas_68):>12.1f}  "
+                  f"{np.nanmedian(areas_95):>12.1f}")
 
         fig = plot_ks_results(
             results_corrected, ks_cfg, bright_key=bright_key, redshift_label=z,
