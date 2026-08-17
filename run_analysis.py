@@ -46,7 +46,7 @@ REDSHIFT_CONFIGS = {
         redshift=8.0,
         halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/8.0000/HaloCatalog.h5"),
         muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z8n.h5"),
-        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8n.h5"),
+        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z8_sigmaUVb_06_fullres.h5"),
     ),
     10.5: RedshiftConfig(
         redshift=10.5,
