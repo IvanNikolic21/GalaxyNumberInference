@@ -172,7 +172,7 @@ for i, (z, zlab) in enumerate(zip(REDSHIFTS, Z_LABS)):
     elif z==14:
         BW_FID = 0.3
         BW_STOC = 0.3
-    else:
+    else:a vto make 3D realization. What Imax axis (the long one, w)
         BW_FID = 0.15
         BW_STOC = 0.15
     plot_kde(ax, fid_z[BKEY][FKEY],  COLOR_FID,  bw = BW_FID, ls=LINESTYLES[i])

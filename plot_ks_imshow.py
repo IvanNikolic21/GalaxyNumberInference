@@ -54,7 +54,7 @@ OUTPUT_ROOT = Path("/groups/astro/ivannik/projects/Neighbors/plots")
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
 D1S_FILES = {
-    8.0: CACHE_ROOT / "z8.0" / "d1s_fiducial_real1.npz",
+    8.0: CACHE_ROOT / "z8.0" / "d1s_fiducial_real4.npz",
     10.5: CACHE_ROOT / "z10.5" / "d1s_fiducial_real20.npz",
     12.0: CACHE_ROOT / "z12.0" / "d1s_fiducial_real100.npz",
     14.0: CACHE_ROOT / "z14.0" / "d1s_fiducial_real200.npz",
