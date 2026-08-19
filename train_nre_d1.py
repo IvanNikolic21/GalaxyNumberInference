@@ -72,6 +72,7 @@ class D1NREDataset(Dataset):
         param_max: np.ndarray,
         max_per_catalog: int = 200,
         only_angular: bool = False,
+        weight_by_catalog_count: bool = False,
     ):
         self.param_min    = param_min
         self.param_max    = param_max
@@ -81,6 +82,7 @@ class D1NREDataset(Dataset):
         self.params      = []
         self.catalog_ids = []
         self.is_prior    = []  # track which db each env came from
+        self.weights     = []  # per-example loss weight (see weight_by_catalog_count)
 
         cat_idx = 0
         for db_idx, db_dir in enumerate(database_dirs):
@@ -98,8 +100,14 @@ class D1NREDataset(Dataset):
                     continue
 
                 indices = np.arange(len(offsets) - 1)
-                if max_per_catalog is not None and len(indices) > max_per_catalog:
+                if max_per_catalog is not None and max_per_catalog > 0 and len(indices) > max_per_catalog:
                     indices = np.random.choice(indices, max_per_catalog, replace=False)
+
+                # See the matching comment in train_nre.py's NREDataset -- gives
+                # every catalog equal total loss weight regardless of how many
+                # bright-galaxy environments it produced.
+                n_used = len(indices)
+                weight = (1.0 / n_used) if (weight_by_catalog_count and n_used > 0) else 1.0
 
                 for i in indices:
                     env = coords[offsets[i]:offsets[i+1]]
@@ -109,6 +117,7 @@ class D1NREDataset(Dataset):
                     self.params.append(params)
                     self.catalog_ids.append(cat_idx)
                     self.is_prior.append(db_idx > 0)
+                    self.weights.append(weight)
 
                 cat_idx += 1
 
@@ -151,7 +160,8 @@ class D1NREDataset(Dataset):
         x_real = torch.cat([x, theta_real])
         x_fake = torch.cat([x, theta_fake])
 
-        return x_real, torch.tensor(1.0), x_fake, torch.tensor(0.0)
+        weight = torch.tensor(self.weights[idx], dtype=torch.float32)
+        return x_real, torch.tensor(1.0), x_fake, torch.tensor(0.0), weight
 
 
 class D1NRENetwork(nn.Module):
@@ -171,14 +181,22 @@ class D1NRENetwork(nn.Module):
         return self.net(x).squeeze(-1)
 
 
+def _weighted_bce(criterion, logits_r, label_r, logits_f, label_f, weight):
+    """criterion must use reduction='none'. See train_nre.py's identical helper."""
+    loss_r = criterion(logits_r, label_r)
+    loss_f = criterion(logits_f, label_f)
+    return ((loss_r + loss_f) * weight).sum() / weight.sum()
+
+
 def train_epoch(model, loader, optimizer, criterion, device):
     model.train()
     total_loss = 0.0
-    for x_real, label_r, x_fake, label_f in loader:
+    for x_real, label_r, x_fake, label_f, weight in loader:
         x_real, x_fake   = x_real.to(device), x_fake.to(device)
         label_r, label_f = label_r.to(device), label_f.to(device)
+        weight = weight.to(device)
         optimizer.zero_grad()
-        loss = criterion(model(x_real), label_r) + criterion(model(x_fake), label_f)
+        loss = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f, weight)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -189,10 +207,11 @@ def val_epoch(model, loader, criterion, device):
     model.eval()
     total_loss = 0.0
     with torch.no_grad():
-        for x_real, label_r, x_fake, label_f in loader:
+        for x_real, label_r, x_fake, label_f, weight in loader:
             x_real, x_fake   = x_real.to(device), x_fake.to(device)
             label_r, label_f = label_r.to(device), label_f.to(device)
-            loss = criterion(model(x_real), label_r) + criterion(model(x_fake), label_f)
+            weight = weight.to(device)
+            loss = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f, weight)
             total_loss += loss.item()
     return total_loss / len(loader)
 
@@ -220,7 +239,14 @@ def parse_args():
     p.add_argument("--val-frac",        type=float, default=0.2)
     p.add_argument("--hidden-dims",     type=int,   nargs='+', default=[64, 64, 64])
     p.add_argument("--dropout",         type=float, default=0.1)
-    p.add_argument("--max-per-catalog", type=int,   default=200)
+    p.add_argument("--max-per-catalog", type=int,   default=200,
+                   help="Cap on environments loaded per catalog file, randomly "
+                        "subsampled when exceeded. 0 disables (load every environment) "
+                        "-- combine with --weight-by-catalog-count to keep all data "
+                        "while still balancing catalogs' loss contribution.")
+    p.add_argument("--weight-by-catalog-count", action="store_true",
+                   help="Weight each environment's loss contribution by 1/(environments "
+                        "used for its catalog). See train_nre.py's identical flag.")
     p.add_argument("--oversample-prior", action="store_true",
                    help="Oversample prior database to balance with posterior.")
     p.add_argument("--only-angular",     action="store_true",
@@ -275,11 +301,12 @@ def main():
              param_min=param_min, param_max=param_max)
 
     dataset = D1NREDataset(
-        database_dirs   = db_dirs,
-        param_min       = param_min,
-        param_max       = param_max,
-        max_per_catalog = args.max_per_catalog,
-        only_angular    = args.only_angular,
+        database_dirs           = db_dirs,
+        param_min               = param_min,
+        param_max               = param_max,
+        max_per_catalog         = args.max_per_catalog,
+        only_angular            = args.only_angular,
+        weight_by_catalog_count = args.weight_by_catalog_count,
     )
 
     n_val   = int(len(dataset) * args.val_frac)
@@ -325,7 +352,7 @@ def main():
         progress = (epoch - warmup) / max(1, args.epochs - warmup)
         return 0.5 * (1.0 + np.cos(np.pi * progress))
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = nn.BCEWithLogitsLoss(reduction='none')  # per-example, for _weighted_bce
 
     log.info(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
