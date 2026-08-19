@@ -36,9 +36,9 @@ from uvlf import Mason15
 # ---------------------------------------------------------------------------
 SAMPLES = {
     "UVLF-only":     "/groups/astro/ivannik/projects/Neighbors/UVLF_only/posterior_samples_N0_uvlfonly.npy",
-    "d1-only":       "/groups/astro/ivannik/projects/Neighbors/nre_model_d1_prioronly_only_ang/posterior_samples_d1_N1.npy",
-    "full-MLP":      "/groups/astro/ivannik/projects/Neighbors/nre_model_prioronly_only_ang/posterior_samples_N1.npy",
-    "full-MLP+UVLF": "/groups/astro/ivannik/projects/Neighbors/nre_model_prioronly_only_ang/posterior_samples_N1_uvlf.npy",
+    "d1-only":       "/groups/astro/ivannik/projects/Neighbors/nre_model_d1_capped_only_ang/posterior_samples_d1_N1.npy",
+    "full-MLP":      "/groups/astro/ivannik/projects/Neighbors/nre_model_capped_only_ang/posterior_samples_N1.npy",
+    "full-MLP+UVLF": "/groups/astro/ivannik/projects/Neighbors/nre_model_capped_only_ang/posterior_samples_N1_uvlf.npy",
 }
 OUTPUT_DIR = "/groups/astro/ivannik/projects/Neighbors/UVLF_only"
 
