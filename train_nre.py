@@ -392,6 +392,14 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    # Suffix output dir for angular-only models to avoid overwriting standard
+    # models -- must happen BEFORE mkdir/normalization.npz below, or those land
+    # in the unsuffixed directory while checkpoints try to write to the (never
+    # created) suffixed one.
+    if args.only_angular:
+        args.output_dir = args.output_dir.parent / (args.output_dir.name + "_only_ang")
+
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     torch.manual_seed(args.seed)
@@ -431,10 +439,6 @@ def main():
 
     np.savez(args.output_dir / "normalization.npz",
              param_min=param_min, param_max=param_max)
-
-    # Suffix output dir for angular-only models to avoid overwriting standard models
-    if args.only_angular:
-        args.output_dir = args.output_dir.parent / (args.output_dir.name + "_only_ang")
 
     # Build dataset
     if args.summary_mode:
