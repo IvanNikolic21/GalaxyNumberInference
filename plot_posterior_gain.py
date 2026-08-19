@@ -35,9 +35,10 @@ from uvlf import Mason15
 # Inputs — edit these paths if yours differ
 # ---------------------------------------------------------------------------
 SAMPLES = {
-    "UVLF-only": "/groups/astro/ivannik/projects/Neighbors/UVLF_only/posterior_samples_N0_uvlfonly.npy",
-    "d1-only":   "/groups/astro/ivannik/projects/Neighbors/nre_model_d1_prioronly_only_ang/posterior_samples_d1_N1.npy",
-    "full-MLP":  "/groups/astro/ivannik/projects/Neighbors/nre_model_prioronly_only_ang/posterior_samples_N1.npy",
+    "UVLF-only":     "/groups/astro/ivannik/projects/Neighbors/UVLF_only/posterior_samples_N0_uvlfonly.npy",
+    "d1-only":       "/groups/astro/ivannik/projects/Neighbors/nre_model_d1_prioronly_only_ang/posterior_samples_d1_N1.npy",
+    "full-MLP":      "/groups/astro/ivannik/projects/Neighbors/nre_model_prioronly_only_ang/posterior_samples_N1.npy",
+    "full-MLP+UVLF": "/groups/astro/ivannik/projects/Neighbors/nre_model_prioronly_only_ang/posterior_samples_N1_uvlf.npy",
 }
 OUTPUT_DIR = "/groups/astro/ivannik/projects/Neighbors/UVLF_only"
 
@@ -45,10 +46,19 @@ SIGMA_UV_TARGET_MUV  = -20.0   # evaluate sigma_UV(M_h) at the halo mass where m
 MUV_AT_LOGMH_TARGET  = 11.0    # evaluate the (shifted) median M_UV-Mh relation at this log(Mh)
 
 # palette — dataviz skill categorical slots 1-3 (validated all-pairs safe, both modes)
+# for the combined full-MLP+UVLF case, black is used deliberately rather than a 4th
+# categorical hue: it's achromatic, so it can't collide/CVD-confuse with the other
+# three, and reads as "the combined/reference result" rather than another series.
 COLOR_UVLF = "#1baf7a"   # aqua  -- weakest baseline
 COLOR_D1   = "#eb6834"   # orange
-COLOR_MLP  = "#2a78d6"   # blue  -- richest info
-COLORS = {"UVLF-only": COLOR_UVLF, "d1-only": COLOR_D1, "full-MLP": COLOR_MLP}
+COLOR_MLP  = "#2a78d6"   # blue  -- richest single-probe info
+COLOR_MLP_UVLF = "#0b0b0b"   # black -- full-MLP + UVLF combined
+COLORS = {
+    "UVLF-only": COLOR_UVLF,
+    "d1-only": COLOR_D1,
+    "full-MLP": COLOR_MLP,
+    "full-MLP+UVLF": COLOR_MLP_UVLF,
+}
 
 PARAM_LABELS = [r"$M_{\rm UV,add}$", r"$\sigma_{\rm UV,a}$", r"$\sigma_{\rm UV,b}$"]
 PARAM_RANGE  = [(-1.5, 2.0), (-1.0, 1.5), (0.0, 3.0)]
@@ -111,7 +121,9 @@ def summarize(d, label):
             if name != "UVLF-only":
                 print(f"  contraction {name} vs UVLF-only: {widths['UVLF-only'] / widths[name]:.2f}x")
     if "d1-only" in widths and "full-MLP" in widths:
-        print(f"  contraction full-MLP vs d1-only:  {widths['d1-only'] / widths['full-MLP']:.2f}x")
+        print(f"  contraction full-MLP vs d1-only:       {widths['d1-only'] / widths['full-MLP']:.2f}x")
+    if "full-MLP" in widths and "full-MLP+UVLF" in widths:
+        print(f"  contraction full-MLP+UVLF vs full-MLP: {widths['full-MLP'] / widths['full-MLP+UVLF']:.2f}x")
 
 
 summarize(derived_sigma, f"sigma_UV(M_UV={SIGMA_UV_TARGET_MUV:.1f})")
@@ -133,7 +145,8 @@ for name, s in posteriors.items():
 legend_handles = [plt.Line2D([], [], color=COLORS[name], lw=2.5, label=name)
                    for name in SAMPLES]
 fig.legend(handles=legend_handles, loc="upper right", fontsize=12, bbox_to_anchor=(1.0, 1.0))
-fig.suptitle("Posterior gain: UVLF-only $\\to$ d1-only $\\to$ full MLP", fontsize=14, y=1.02)
+fig.suptitle("Posterior gain: UVLF-only $\\to$ d1-only $\\to$ full MLP $\\to$ full MLP + UVLF",
+             fontsize=13, y=1.02)
 fig.savefig(f"{OUTPUT_DIR}/posterior_gain_corner.pdf", bbox_inches="tight")
 print(f"\nSaved: {OUTPUT_DIR}/posterior_gain_corner.pdf")
 
