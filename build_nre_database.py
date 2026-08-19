@@ -129,6 +129,8 @@ def process_one(
     output_dir: Path,
     dz_lower: float | None = None,
     dz_upper: float | None = None,
+    max_env_per_catalog: int | None = None,
+    seed: int = 42,
 ):
     i, (Muv_add, sigmaUV_a, sigmaUV_b) = args_tuple
 
@@ -153,6 +155,22 @@ def process_one(
     faint_mask  = (muvs < FAINT_LIMIT) & (muvs >= BRIGHT_LIMIT)
 
     bright_coords_sel = _halo_coords[bright_mask]
+    n_bright_true = len(bright_coords_sel)
+
+    # Subsample to a fixed cap so every parameter point contributes a comparable
+    # number of training environments regardless of how many bright galaxies it
+    # astrophysically produces -- bright-galaxy counts otherwise scale by orders
+    # of magnitude across the prior (e.g. ~95 at the fiducial point vs. ~185,000
+    # at high sigma_b), which silently dominates the training loss toward
+    # whichever parameter region happens to be densest. K is set to ~100,
+    # matching the bright-galaxy count the fiducial/stochastic models actually
+    # predict for this survey, not an arbitrary percentile of the grid. Catalogs
+    # with fewer than K bright galaxies to begin with are left as-is -- capping
+    # can only trim the dense end, it cannot manufacture examples that don't exist.
+    if max_env_per_catalog is not None and n_bright_true > max_env_per_catalog:
+        rng = np.random.default_rng(seed + i)
+        keep = rng.choice(n_bright_true, size=max_env_per_catalog, replace=False)
+        bright_coords_sel = bright_coords_sel[keep]
 
     half_side = cfg.search_box_mpc(REDSHIFT)
 
@@ -221,12 +239,14 @@ def process_one(
 
     np.savez_compressed(
         out_path,
-        coords  = coords_flat,
-        offsets = offsets_arr,
-        params  = params_arr,
+        coords        = coords_flat,
+        offsets       = offsets_arr,
+        params        = params_arr,
+        n_bright_true = n_bright_true,   # count before subsampling, for diagnostics
     )
     log.info(f"  [{i+1}/{n_total}] Saved: {out_path.name}  "
-             f"({len(bright_coords_sel)} bright, {len(coords_flat)} total neighbors)")
+             f"({len(bright_coords_sel)}/{n_bright_true} bright used, "
+             f"{len(coords_flat)} total neighbors)")
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -249,6 +269,16 @@ def parse_args():
                         "dz_upper = D_C(z+dz) - D_C(z), dz_lower = D_C(z) - D_C(z-dz). "
                         "When set, the z search box uses these asymmetric bounds and the "
                         "output directory gets a '_photzX' suffix.")
+    p.add_argument("--max-environments-per-catalog", type=int, default=100,
+                   help="Cap on bright-galaxy environments kept per parameter point, "
+                        "randomly subsampled when exceeded. Prevents high-bright-count "
+                        "parameter regions (e.g. high sigmaUV_b) from dominating the "
+                        "training set purely because they astrophysically produce more "
+                        "bright galaxies. Set to 0 to disable (keep every environment, "
+                        "the pre-fix behavior).")
+    p.add_argument("--seed", type=int, default=42,
+                   help="RNG seed for environment subsampling (combined with each "
+                        "catalog's index for a distinct, reproducible draw per catalog).")
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -296,12 +326,17 @@ def main():
     _halo_tree_2d = cKDTree(_halo_coords[:, :2])
     log.info("  cKDTree ready.")
 
+    max_env_per_catalog = args.max_environments_per_catalog or None  # 0 -> disabled
+    log.info(f"Max environments per catalog: {max_env_per_catalog or 'unlimited'}")
+
     worker = partial(
         process_one,
-        n_total    = len(params),
-        output_dir = args.output_dir,
-        dz_lower   = dz_lower,
-        dz_upper   = dz_upper,
+        n_total              = len(params),
+        output_dir           = args.output_dir,
+        dz_lower             = dz_lower,
+        dz_upper             = dz_upper,
+        max_env_per_catalog  = max_env_per_catalog,
+        seed                 = args.seed,
     )
 
     items = list(enumerate(zip(Muv_adds, sigmaUV_as, sigmaUV_bs)))
