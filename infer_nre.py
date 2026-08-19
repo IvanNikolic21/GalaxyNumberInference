@@ -286,6 +286,10 @@ def parse_args():
                         "Loaded from model_config.npz if not set.")
     p.add_argument("--use-uvlf", action="store_true",
                    help="Add UVLF log-likelihood (Mason15 + Donnan24 z=10) to the posterior.")
+    p.add_argument("--uvlf-only", action="store_true",
+                   help="Use ONLY the UVLF likelihood — no NRE/clustering term at all "
+                        "(forces 0 environments; implies --use-uvlf). Produces a UVLF-only "
+                        "posterior baseline for comparison against the d1/full-neighbor NRE runs.")
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -333,7 +337,7 @@ def main():
     # UVLF likelihood setup
     mason15 = None
     uvlf_obs = None
-    if args.use_uvlf:
+    if args.use_uvlf or args.uvlf_only:
         log.info("Setting up UVLF likelihood (Mason15 + Donnan24 z=10) ...")
         mason15 = Mason15(z=10.0)
         obs = Observations(ang=False, uvlf=True)
@@ -342,14 +346,21 @@ def main():
         log.info("UVLF likelihood ready.")
 
     # Build environment tensors
+    # (uvlf_only forces this to stay empty — log_posterior sums over env_tensors,
+    #  so an empty list makes the NRE/clustering term identically zero for every
+    #  theta, leaving a pure prior x UVLF-likelihood posterior. Note --n-obs 0
+    #  would NOT achieve this: the loop below appends before checking the break
+    #  condition, so n_obs=0 falls through and silently uses every environment
+    #  in the file instead of none.)
     env_tensors = []
-    for i in range(len(obs_offs) - 1):
-        env = obs_coords[obs_offs[i]:obs_offs[i+1]]
-        if len(env) > 0:
-            env_tensors.append(env_to_tensor(env, summary_mode=summary_mode,
-                                             only_angular=only_angular))
-        if len(env_tensors) == args.n_obs:
-            break
+    if not args.uvlf_only:
+        for i in range(len(obs_offs) - 1):
+            env = obs_coords[obs_offs[i]:obs_offs[i+1]]
+            if len(env) > 0:
+                env_tensors.append(env_to_tensor(env, summary_mode=summary_mode,
+                                                 only_angular=only_angular))
+            if len(env_tensors) == args.n_obs:
+                break
     log.info(f"Using {len(env_tensors)} environments.")
 
     # Sample posterior
@@ -400,13 +411,19 @@ def main():
     fig.legend(handles=legend_handles, loc='upper right', fontsize=11,
                bbox_to_anchor=(1.0, 1.0))
 
+    title_prefix = "UVLF-only posterior" if args.uvlf_only else "NRE posterior"
     fig.suptitle(
-        f"NRE posterior — {len(env_tensors)} environment(s)  "
+        f"{title_prefix} — {len(env_tensors)} environment(s)  "
         f"({'MCMC' if not args.use_grid else 'grid'})",
         fontsize=14, y=1.02,
     )
 
-    uvlf_tag = "_uvlf" if args.use_uvlf else ""
+    if args.uvlf_only:
+        uvlf_tag = "_uvlfonly"
+    elif args.use_uvlf:
+        uvlf_tag = "_uvlf"
+    else:
+        uvlf_tag = ""
     out = args.output_dir / f"corner_N{len(env_tensors)}_{true_params[0]}{uvlf_tag}.pdf"
     fig.savefig(out, bbox_inches="tight")
     log.info(f"Saved: {out}")
