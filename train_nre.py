@@ -216,8 +216,10 @@ class NREDataset(Dataset):
         flat, n_norm, n, dists = env_to_array(env, summary_mode=self.summary_mode,
                                                only_angular=self.only_angular)
 
-        # Augmentation: random translation of xyz (only in full mode — summary uses distances)
-        if self.augment and n > 0 and not self.summary_mode:
+        # Augmentation: random translation of xyz (only in full 3D mode -- summary
+        # uses distances, and only_angular drops dz and uses N_FEATURES_ANG=3, not
+        # N_FEATURES_FULL=4, so the reshape below is only valid when NEITHER is set).
+        if self.augment and n > 0 and not self.summary_mode and not self.only_angular:
             shift = np.random.uniform(-5.0, 5.0, size=3).astype(np.float32)
             flat_2d = flat.reshape(MAX_NEIGHBORS, N_FEATURES_FULL)
             flat_2d[:n, :3] += shift
