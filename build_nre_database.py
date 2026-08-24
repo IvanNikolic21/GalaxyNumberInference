@@ -157,6 +157,19 @@ def process_one(
     bright_coords_sel = _halo_coords[bright_mask]
     n_bright_true = len(bright_coords_sel)
 
+    # Always randomize the order of bright galaxies, independent of capping --
+    # downstream consumers (e.g. infer_nre.py's --n-obs) take the first N
+    # environments *in file order*, so any un-shuffled catalog order (e.g.
+    # halo-ID order, which can correlate with spatial position) would silently
+    # bias which subset gets used for different values of N. Previously this
+    # shuffle only happened as a side effect of the rng.choice() subsampling
+    # below, so catalogs *under* the cap (e.g. ~95 bright galaxies at the
+    # fiducial point, below the K=100 cap) were never reordered at all --
+    # re-introducing the same order-dependence bug for exactly those points.
+    rng = np.random.default_rng(seed + i)
+    if n_bright_true > 0:
+        bright_coords_sel = bright_coords_sel[rng.permutation(n_bright_true)]
+
     # Subsample to a fixed cap so every parameter point contributes a comparable
     # number of training environments regardless of how many bright galaxies it
     # astrophysically produces -- bright-galaxy counts otherwise scale by orders
@@ -165,12 +178,11 @@ def process_one(
     # whichever parameter region happens to be densest. K is set to ~100,
     # matching the bright-galaxy count the fiducial/stochastic models actually
     # predict for this survey, not an arbitrary percentile of the grid. Catalogs
-    # with fewer than K bright galaxies to begin with are left as-is -- capping
-    # can only trim the dense end, it cannot manufacture examples that don't exist.
+    # with fewer than K bright galaxies to begin with are left as-is (now
+    # shuffled, just not trimmed) -- capping can only trim the dense end, it
+    # cannot manufacture examples that don't exist.
     if max_env_per_catalog is not None and n_bright_true > max_env_per_catalog:
-        rng = np.random.default_rng(seed + i)
-        keep = rng.choice(n_bright_true, size=max_env_per_catalog, replace=False)
-        bright_coords_sel = bright_coords_sel[keep]
+        bright_coords_sel = bright_coords_sel[:max_env_per_catalog]
 
     half_side = cfg.search_box_mpc(REDSHIFT)
 

@@ -336,19 +336,55 @@ class NRENetwork(nn.Module):
 # Training
 # ---------------------------------------------------------------------------
 
-def _weighted_bce(criterion, logits_r, label_r, logits_f, label_f, weight):
+def _weighted_bce(criterion, logits_r, label_r, logits_f, label_f, weight, balance_lambda=0.0):
     """criterion must use reduction='none'. Combines real+fake terms per
     example, then takes the weight-normalized mean over the batch. With all
     weights == 1 this is numerically identical to
-    criterion(...).mean() + criterion(...).mean() under mean-reduction."""
+    criterion(...).mean() + criterion(...).mean() under mean-reduction.
+
+    When balance_lambda > 0, adds the Balanced NRE regularization penalty
+    (Delaunoy et al. 2022, "Towards Reliable Simulation-Based Inference with
+    Balanced Neural Ratio Estimation", arXiv:2208.13624, Eq. 7):
+
+        L_B = L + lambda * (B - 1)^2,   B = E_joint[d] + E_marginal[d]
+
+    A classifier is "balanced" (Def. 1) when its mean predicted probability
+    on real (joint) pairs plus its mean predicted probability on shuffled
+    (marginal) pairs equals exactly 1; the Bayes-optimal classifier is always
+    balanced (Thm. 3), but enforcing it during training biases imperfectly-
+    trained classifiers toward under- rather than over-confidence (Thms 1-2).
+    This matters for us specifically because multi-environment inference sums
+    log-ratios across N environments: any systematic over-confidence in a
+    single environment's ratio estimate compounds with N instead of
+    averaging out, which is the leading explanation for the N=10->50
+    collapse-onto-a-wrong-point behavior seen in the coverage checks. B is
+    estimated here as a weighted mean over each half of the batch (real,
+    fake), using the same per-catalog example weight as the BCE term, so the
+    balancing condition stays consistent with --weight-by-catalog-count
+    rather than silently re-introducing the catalog-count imbalance it fixes.
+    lambda=100 is the paper's recommended default across their benchmarks.
+
+    Returns (total_loss, bce_loss, B) so B can be logged/monitored; B is
+    None when balance_lambda == 0 (vanilla NRE, unchanged behavior).
+    """
     loss_r = criterion(logits_r, label_r)
     loss_f = criterion(logits_f, label_f)
-    return ((loss_r + loss_f) * weight).sum() / weight.sum()
+    bce = ((loss_r + loss_f) * weight).sum() / weight.sum()
+
+    if balance_lambda > 0:
+        d_r = torch.sigmoid(logits_r)
+        d_f = torch.sigmoid(logits_f)
+        B = (d_r * weight).sum() / weight.sum() + (d_f * weight).sum() / weight.sum()
+        total = bce + balance_lambda * (B - 1.0) ** 2
+        return total, bce, B
+    return bce, bce, None
 
 
-def train_epoch(model, loader, optimizer, criterion, device):
+def train_epoch(model, loader, optimizer, criterion, device, balance_lambda=0.0):
     model.train()
     total_loss = 0.0
+    total_bce  = 0.0
+    total_B    = 0.0
     for x_real, label_r, x_fake, label_f, weight in loader:
         x_real  = x_real.to(device)
         x_fake  = x_fake.to(device)
@@ -356,16 +392,23 @@ def train_epoch(model, loader, optimizer, criterion, device):
         label_f = label_f.to(device)
         weight  = weight.to(device)
         optimizer.zero_grad()
-        loss = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f, weight)
+        loss, bce, B = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f,
+                                      weight, balance_lambda)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
-    return total_loss / len(loader)
+        total_bce  += bce.item()
+        if B is not None:
+            total_B += B.item()
+    n = len(loader)
+    return total_loss / n, total_bce / n, (total_B / n if balance_lambda > 0 else None)
 
 
-def val_epoch(model, loader, criterion, device):
+def val_epoch(model, loader, criterion, device, balance_lambda=0.0):
     model.eval()
     total_loss = 0.0
+    total_bce  = 0.0
+    total_B    = 0.0
     with torch.no_grad():
         for x_real, label_r, x_fake, label_f, weight in loader:
             x_real  = x_real.to(device)
@@ -373,9 +416,14 @@ def val_epoch(model, loader, criterion, device):
             label_r = label_r.to(device)
             label_f = label_f.to(device)
             weight  = weight.to(device)
-            loss = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f, weight)
+            loss, bce, B = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f,
+                                          weight, balance_lambda)
             total_loss += loss.item()
-    return total_loss / len(loader)
+            total_bce  += bce.item()
+            if B is not None:
+                total_B += B.item()
+    n = len(loader)
+    return total_loss / n, total_bce / n, (total_B / n if balance_lambda > 0 else None)
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +474,15 @@ def parse_args():
     p.add_argument("--only-angular",    action="store_true",
                    help="Use projected 2D distance sqrt(dx²+dy²) instead of full 3D. "
                         "Matches real observations with angular separations only.")
+    p.add_argument("--balanced", action="store_true",
+                   help="Train with the Balanced NRE regularization penalty (Delaunoy et al. "
+                        "2022, arXiv:2208.13624) instead of vanilla NRE. Intended to fix "
+                        "posteriors becoming overconfident and wrong as more environments are "
+                        "combined (log-ratios summed) at inference time, by discouraging the "
+                        "classifier from being systematically over-confident in the first place.")
+    p.add_argument("--balance-lambda", type=float, default=100.0,
+                   help="Strength of the balancing penalty (only used with --balanced). "
+                        "100.0 is the paper's recommended default.")
     return p.parse_args()
 
 
@@ -553,16 +610,27 @@ def main():
 
     n_params = sum(p.numel() for p in model.parameters())
     log.info(f"Model parameters: {n_params:,}")
+    balance_lambda = args.balance_lambda if args.balanced else 0.0
+    if args.balanced:
+        log.info(f"Balanced NRE enabled (lambda={balance_lambda}). "
+                 f"A balanced classifier has B -> 1; watch it converge below.")
 
     # Training loop
     best_val_loss = float('inf')
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_loss   = val_epoch(model, val_loader, criterion, device)
+        train_loss, train_bce, train_B = train_epoch(model, train_loader, optimizer, criterion,
+                                                       device, balance_lambda)
+        val_loss, val_bce, val_B       = val_epoch(model, val_loader, criterion, device,
+                                                     balance_lambda)
         scheduler.step()
 
-        log.info(f"Epoch {epoch:3d}/{args.epochs}  "
-                 f"train={train_loss:.4f}  val={val_loss:.4f}")
+        if args.balanced:
+            log.info(f"Epoch {epoch:3d}/{args.epochs}  "
+                     f"train={train_loss:.4f} (bce={train_bce:.4f}, B={train_B:.4f})  "
+                     f"val={val_loss:.4f} (bce={val_bce:.4f}, B={val_B:.4f})")
+        else:
+            log.info(f"Epoch {epoch:3d}/{args.epochs}  "
+                     f"train={train_loss:.4f}  val={val_loss:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -575,7 +643,9 @@ def main():
              dropout=args.dropout,
              input_dim=input_dim,
              summary_mode=int(args.summary_mode),
-             only_angular=int(args.only_angular))
+             only_angular=int(args.only_angular),
+             balanced=int(args.balanced),
+             balance_lambda=args.balance_lambda)
 
     log.info(f"Training complete. Best val loss: {best_val_loss:.4f}")
     log.info(f"Model saved to: {args.output_dir}")
