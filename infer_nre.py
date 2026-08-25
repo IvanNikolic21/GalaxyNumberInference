@@ -183,12 +183,38 @@ def uvlf_log_likelihood(theta, mason15, muv_obs, phi_obs, sig_p, sig_m):
 # Posterior sampling
 # ---------------------------------------------------------------------------
 
+def gelman_rubin_rhat(chain):
+    """Standard Gelman-Rubin R-hat, treating each emcee walker as an independent
+    chain. chain: array (n_steps, n_walkers) for one parameter, post-burn-in.
+    R-hat ~= 1 indicates good mixing (all walkers agree on the target
+    distribution); R-hat >> 1 (commonly >1.1 flagged) indicates walkers have
+    not converged to the same distribution -- e.g. some stuck in one region,
+    others in another, which looks identical to genuine multimodality in a
+    single flattened corner plot but is actually a sampling failure."""
+    n_steps, n_walkers = chain.shape
+    chain_means = chain.mean(axis=0)                      # (n_walkers,)
+    grand_mean  = chain_means.mean()
+    B = n_steps / (n_walkers - 1) * np.sum((chain_means - grand_mean) ** 2)
+    W = chain.var(axis=0, ddof=1).mean()
+    var_hat = ((n_steps - 1) / n_steps) * W + B / n_steps
+    return float(np.sqrt(var_hat / W)) if W > 0 else float('nan')
+
+
 def sample_posterior_mcmc(
     env_tensors, model, param_min, param_max,
     n_walkers=32, n_steps=2000, n_burn=500,
-    mason15=None, uvlf_obs=None,
+    mason15=None, uvlf_obs=None, return_chain=False,
 ):
-    """Sample posterior using emcee MCMC."""
+    """Sample posterior using emcee MCMC.
+
+    If return_chain=True, also returns (raw_chain, rhat) where raw_chain has
+    shape (n_steps-n_burn, n_walkers, N_PARAMS) -- i.e. walker identity is
+    preserved, unlike the flattened `samples` -- and rhat is a dict mapping
+    each parameter index to its Gelman-Rubin R-hat. Use this to check whether
+    an apparently multimodal posterior is real (walkers agree, R-hat ~ 1,
+    individual walkers visit all modes) or a mixing failure (R-hat >> 1,
+    different walkers permanently stuck in different modes).
+    """
     try:
         import emcee
     except ImportError:
@@ -216,7 +242,16 @@ def sample_posterior_mcmc(
     samples = sampler.get_chain(discard=n_burn, flat=True)
     log.info(f"  Acceptance fraction: {sampler.acceptance_fraction.mean():.3f}")
     log.info(f"  Samples: {len(samples)}")
-    return samples
+
+    if not return_chain:
+        return samples
+
+    raw_chain = sampler.get_chain(discard=n_burn, flat=False)  # (n_steps-n_burn, n_walkers, N_PARAMS)
+    rhat = {i: gelman_rubin_rhat(raw_chain[:, :, i]) for i in range(N_PARAMS)}
+    for i, r in rhat.items():
+        flag = "" if r < 1.1 else "  <-- POOR MIXING (>1.1)"
+        log.info(f"  R-hat[param {i}] = {r:.4f}{flag}")
+    return samples, raw_chain, rhat
 
 
 def sample_posterior_grid(
@@ -290,6 +325,12 @@ def parse_args():
                    help="Use ONLY the UVLF likelihood — no NRE/clustering term at all "
                         "(forces 0 environments; implies --use-uvlf). Produces a UVLF-only "
                         "posterior baseline for comparison against the d1/full-neighbor NRE runs.")
+    p.add_argument("--save-chain", action="store_true",
+                   help="Also save the raw (unflattened) MCMC chain, with walker identity "
+                        "preserved, plus per-parameter Gelman-Rubin R-hat. Use to check whether "
+                        "an apparently multimodal posterior is real (walkers agree, each visits "
+                        "all modes) or a mixing failure (walkers disagree/get stuck). Ignored "
+                        "with --use-grid.")
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -364,11 +405,21 @@ def main():
     log.info(f"Using {len(env_tensors)} environments.")
 
     # Sample posterior
+    raw_chain, rhat = None, None
     if args.use_grid:
         samples = sample_posterior_grid(
             env_tensors, model, param_min, param_max,
             n_grid=args.n_grid,
             mason15=mason15, uvlf_obs=uvlf_obs,
+        )
+    elif args.save_chain:
+        samples, raw_chain, rhat = sample_posterior_mcmc(
+            env_tensors, model, param_min, param_max,
+            n_walkers=args.n_walkers,
+            n_steps=args.n_steps,
+            n_burn=args.n_burn,
+            mason15=mason15, uvlf_obs=uvlf_obs,
+            return_chain=True,
         )
     else:
         samples = sample_posterior_mcmc(
@@ -431,6 +482,13 @@ def main():
     # Also save samples for external use
     np.save(args.output_dir / f"posterior_samples_N{len(env_tensors)}{uvlf_tag}.npy", samples)
     log.info(f"Samples saved.")
+
+    if raw_chain is not None:
+        chain_out = args.output_dir / f"chain_raw_N{len(env_tensors)}{uvlf_tag}.npy"
+        np.save(chain_out, raw_chain)  # (n_steps-n_burn, n_walkers, N_PARAMS)
+        np.savez(args.output_dir / f"rhat_N{len(env_tensors)}{uvlf_tag}.npz",
+                 **{f"param{i}": r for i, r in rhat.items()})
+        log.info(f"Raw chain (walker identity preserved) saved: {chain_out}")
 
 
 if __name__ == "__main__":

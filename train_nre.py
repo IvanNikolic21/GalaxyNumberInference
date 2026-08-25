@@ -497,7 +497,7 @@ def main():
     # models -- must happen BEFORE mkdir/normalization.npz below, or those land
     # in the unsuffixed directory while checkpoints try to write to the (never
     # created) suffixed one.
-    if args.only_angular:
+    if args.only_angular and not args.output_dir.name.endswith("_only_ang"):
         args.output_dir = args.output_dir.parent / (args.output_dir.name + "_only_ang")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
