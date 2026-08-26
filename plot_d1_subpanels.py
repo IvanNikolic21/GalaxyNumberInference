@@ -88,8 +88,8 @@ def add_param_legend(ax, labels, linestyles=None, loc='center right'):
 def add_model_legend(ax, loc='upper right'):
     """Color legend mapping model -> color, meant to be shown on one panel only."""
     handles = [
-        Line2D([0], [0], color=COLOR_FID,  lw=3, label='intrinsically\nbright'),
-        Line2D([0], [0], color=COLOR_STOC, lw=3, label='increased\nstochasticity'),
+        Line2D([0], [0], color=COLOR_FID,  lw=3, label='high\nluminosity'),
+        Line2D([0], [0], color=COLOR_STOC, lw=3, label='high\nstochasticity'),
     ]
     return ax.legend(handles=handles, loc=loc, fontsize=15, frameon=False, handlelength=1.5)
 
