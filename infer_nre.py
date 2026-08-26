@@ -138,20 +138,26 @@ def env_to_tensor(env, summary_mode=False, only_angular=False):
     return torch.from_numpy(np.concatenate([padded.flatten(), n_norm]))
 
 
-def log_posterior(thetas, env_tensors, model, param_min, param_max):
+def log_posterior(thetas, env_tensors, models, param_min, param_max):
     """Evaluate sum of log-ratios over all environments for a batch of thetas.
 
     Parameters
     ----------
     thetas : np.ndarray, shape (B, 3) — unnormalized parameter values
     env_tensors : list of torch.Tensor — pre-computed environment tensors
-    model : NRENetwork
+    models : list of NRENetwork — one model for standard inference; more than
+        one to ensemble-average (mean logit across models, per environment,
+        before summing over environments) as a mitigation for seed-to-seed
+        training variance. A bare model also works (wrapped as a 1-list).
     param_min, param_max : np.ndarray
 
     Returns
     -------
     log_post : np.ndarray, shape (B,)
     """
+    if not isinstance(models, (list, tuple)):
+        models = [models]
+
     thetas_norm = torch.from_numpy(
         np.stack([normalize_params(t, param_min, param_max) for t in thetas])
     )  # (B, 3)
@@ -161,7 +167,8 @@ def log_posterior(thetas, env_tensors, model, param_min, param_max):
         for x in env_tensors:
             x_rep = x.unsqueeze(0).expand(len(thetas), -1)  # (B, 41)
             inp   = torch.cat([x_rep, thetas_norm], dim=1)   # (B, 44)
-            log_post += model(inp)
+            ratio = torch.stack([m(inp) for m in models], dim=0).mean(dim=0)
+            log_post += ratio
 
     return log_post.numpy()
 
@@ -298,8 +305,14 @@ def parse_args():
     )
     p.add_argument("--obs-file",   type=Path, required=True,
                    help="Path to .npz observation file (nre_*.npz format).")
-    p.add_argument("--model-dir",  type=Path,
-                   default=Path("/groups/astro/ivannik/projects/Neighbors/nre_model"))
+    p.add_argument("--model-dir",  type=Path, nargs='+',
+                   default=[Path("/groups/astro/ivannik/projects/Neighbors/nre_model")],
+                   help="One or more trained-model directories. Pass more than one to ensemble-"
+                        "average their ratio estimates (mean logit per (environment, theta) call, "
+                        "before summing log-ratios over environments) -- the standard NRE mitigation "
+                        "for seed-to-seed training variance, e.g.: "
+                        "--model-dir nre_model_balanced_only_ang_only_ang nre_model_balanced_seed43_only_ang "
+                        "nre_model_balanced_seed44_only_ang nre_model_balanced_seed45_only_ang")
     p.add_argument("--output-dir", type=Path,
                    default=Path("/groups/astro/ivannik/projects/Neighbors/nre_model"))
     p.add_argument("--n-obs",      type=int,  default=50,
@@ -341,26 +354,47 @@ def main():
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load model
-    config    = np.load(args.model_dir / "model_config.npz")
-    norm      = np.load(args.model_dir / "normalization.npz")
-    param_min = norm['param_min']
-    param_max = norm['param_max']
+    # Load model(s) -- one for standard inference, several to ensemble-average
+    model_dirs = args.model_dir  # nargs='+', always a list
+    is_ensemble = len(model_dirs) > 1
+    models = []
+    param_min = param_max = input_dim = summary_mode = only_angular = None
 
-    hidden_dims  = list(config['hidden_dims'])
-    dropout      = float(config['dropout'])
-    input_dim    = int(config['input_dim'])
-    summary_mode = bool(int(config['summary_mode'])) if 'summary_mode' in config else False
-    only_angular = bool(int(config['only_angular'])) if 'only_angular' in config else False
-    if args.only_angular:
-        only_angular = True  # CLI flag overrides config
+    for i, model_dir in enumerate(model_dirs):
+        config = np.load(model_dir / "model_config.npz")
+        norm   = np.load(model_dir / "normalization.npz")
+        this_param_min = norm['param_min']
+        this_param_max = norm['param_max']
+        this_input_dim = int(config['input_dim'])
+        this_summary_mode = bool(int(config['summary_mode'])) if 'summary_mode' in config else False
+        this_only_angular = bool(int(config['only_angular'])) if 'only_angular' in config else False
+        if args.only_angular:
+            this_only_angular = True  # CLI flag overrides config
+
+        if i == 0:
+            param_min, param_max = this_param_min, this_param_max
+            input_dim, summary_mode, only_angular = this_input_dim, this_summary_mode, this_only_angular
+        else:
+            # Ensemble members must agree on everything the MCMC/input-encoding assumes,
+            # or averaging their outputs is not meaningful.
+            assert np.allclose(this_param_min, param_min) and np.allclose(this_param_max, param_max), \
+                f"{model_dir}: param_min/param_max don't match the first model -- refusing to ensemble."
+            assert this_input_dim == input_dim, f"{model_dir}: input_dim mismatch."
+            assert this_summary_mode == summary_mode and this_only_angular == only_angular, \
+                f"{model_dir}: summary_mode/only_angular mismatch."
+
+        m = NRENetwork(this_input_dim, list(config['hidden_dims']), float(config['dropout']))
+        m.load_state_dict(torch.load(model_dir / "nre_best.pt", map_location="cpu"))
+        m.eval()
+        models.append(m)
+
     log.info(f"Mode: {'summary' if summary_mode else 'full'}  "
              f"only_angular={only_angular}  input_dim={input_dim}")
-
-    model = NRENetwork(input_dim, hidden_dims, dropout)
-    model.load_state_dict(torch.load(args.model_dir / "nre_best.pt", map_location="cpu"))
-    model.eval()
-    log.info("Model loaded.")
+    if is_ensemble:
+        log.info(f"Ensemble of {len(models)} models loaded: {[str(d) for d in model_dirs]}")
+    else:
+        log.info("Model loaded.")
+    model = models[0]  # kept for any code path that still expects a single model (e.g. grid sampler)
 
     # Load observation
     obs_data   = np.load(args.obs_file)
@@ -408,13 +442,13 @@ def main():
     raw_chain, rhat = None, None
     if args.use_grid:
         samples = sample_posterior_grid(
-            env_tensors, model, param_min, param_max,
+            env_tensors, models, param_min, param_max,
             n_grid=args.n_grid,
             mason15=mason15, uvlf_obs=uvlf_obs,
         )
     elif args.save_chain:
         samples, raw_chain, rhat = sample_posterior_mcmc(
-            env_tensors, model, param_min, param_max,
+            env_tensors, models, param_min, param_max,
             n_walkers=args.n_walkers,
             n_steps=args.n_steps,
             n_burn=args.n_burn,
@@ -423,7 +457,7 @@ def main():
         )
     else:
         samples = sample_posterior_mcmc(
-            env_tensors, model, param_min, param_max,
+            env_tensors, models, param_min, param_max,
             n_walkers=args.n_walkers,
             n_steps=args.n_steps,
             n_burn=args.n_burn,
