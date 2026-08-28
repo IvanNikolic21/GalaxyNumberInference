@@ -7,9 +7,13 @@ One figure, three panels:
   Middle: vary Muv,0   = -21.0, -21.5, -22.0  (fixed Muv,lim=-18.5, z=10.5)
   Right:  vary z       = 8, 12, 14             (fixed Muv,0=-21.5, Muv,lim=-18.5)
 
-Color encodes the model (intrinsically bright vs increased stochasticity,
-shared across all three panels); linestyle encodes the varying parameter
-within each panel.
+Color hue encodes the model (intrinsically bright vs increased stochasticity,
+shared across all three panels); shade of that hue -- plus linewidth, tied
+together -- encodes the varying parameter within each panel. The
+darkest/thickest line in each panel marks whichever value shows the
+clearest fiducial-vs-stochastic difference, which is why the shade/width
+order is reversed in the z panel relative to the other two (see comments
+at each panel below).
 """
 
 import numpy as np
@@ -52,44 +56,57 @@ CACHE = {
 }
 
 # ---------------------------------------------------------------------------
-# Colors — one per model, shared across all panels
+# Colors — one 3-shade sequential ramp per model (light -> dark), shared hue
+# across all panels; shade within a panel encodes the varying parameter.
+# Exact ramps restored from the pre-linestyle version of this figure
+# (commit bfb1f44's predecessor): ColorBrewer 3-class Oranges / Blues.
 # ---------------------------------------------------------------------------
-COLOR_FID  = '#fd8d3c'
-COLOR_STOC = '#08519c'
+COLORS_FID  = ['#fdbe85', '#fd8d3c', '#d94701']   # light -> dark orange
+COLORS_STOC = ['#bdd7e7', '#6baed6', '#2171b5']   # light -> dark blue
+COLORS_FID_REV  = COLORS_FID[::-1]
+COLORS_STOC_REV = COLORS_STOC[::-1]
 
-# Linestyles — one per varying-parameter value within a panel. Each panel
-# uses LINESTYLES_REV (reversed) so that its most extreme value -- the one
-# expected to show the clearest fiducial/stochastic difference -- gets the
-# solid line, since solid draws the eye first.
-LINESTYLES = ['-', '--', ':']
-LINESTYLES_REV = LINESTYLES[::-1]
+# Linewidths — tied to shade: lightest shade is thinnest, darkest is
+# thickest, so the two encodings reinforce the same visual hierarchy.
+LINEWIDTHS = [1.4, 2.2, 3.0]
+LINEWIDTHS_REV = LINEWIDTHS[::-1]
+
+# Neutral grayscale ramp used only for the parameter-value legend swatches,
+# so that legend doesn't imply the shade encoding is specific to one hue
+# (ColorBrewer 3-class Greys, same design as the color ramps above).
+GRAYS = ['#bdbdbd', '#636363', '#252525']
+GRAYS_REV = GRAYS[::-1]
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 x = np.linspace(0, 8, 300)
 
-def plot_kde(ax, arr, color, label=None, lw=2.5, bw=0.2, ls='-'):
+def plot_kde(ax, arr, color, label=None, lw=2.5, bw=0.2):
     if len(arr) < 2:
         return
     try:
         kde = gaussian_kde(arr, bw_method=bw)
-        ax.plot(x, kde(x), color=color, lw=lw, ls=ls, label=label)
+        ax.plot(x, kde(x), color=color, lw=lw, label=label)
     except Exception:
         pass
 
-def add_param_legend(ax, labels, linestyles=None, loc='center right'):
-    """Black-line legend mapping this panel's linestyles -> parameter values."""
-    ls_list = LINESTYLES_REV if linestyles is None else linestyles
-    handles = [Line2D([0], [0], color='black', lw=2.5, ls=ls, label=lab)
-               for ls, lab in zip(ls_list, labels)]
+def add_param_legend(ax, labels, grays=None, linewidths=None, loc='center right'):
+    """Grayscale-line legend mapping this panel's shade+linewidth -> parameter
+    values (gray rather than the model hue, since the shade/width encoding
+    applies the same way to both models)."""
+    gray_list = GRAYS if grays is None else grays
+    lw_list   = LINEWIDTHS if linewidths is None else linewidths
+    handles = [Line2D([0], [0], color=g, lw=lw, label=lab)
+               for g, lw, lab in zip(gray_list, lw_list, labels)]
     return ax.legend(handles=handles, loc=loc, fontsize=14, frameon=False, handlelength=1.5)
 
 def add_model_legend(ax, loc='upper right'):
-    """Color legend mapping model -> color, meant to be shown on one panel only."""
+    """Color legend mapping model -> hue, meant to be shown on one panel only.
+    Uses the medium shade of each model's ramp as the representative swatch."""
     handles = [
-        Line2D([0], [0], color=COLOR_FID,  lw=3, label='high\nluminosity'),
-        Line2D([0], [0], color=COLOR_STOC, lw=3, label='high\nstochasticity'),
+        Line2D([0], [0], color=COLORS_FID[1],  lw=3, label='high\nluminosity'),
+        Line2D([0], [0], color=COLORS_STOC[1], lw=3, label='high\nstochasticity'),
     ]
     return ax.legend(handles=handles, loc=loc, fontsize=15, frameon=False, handlelength=1.5)
 
@@ -128,12 +145,13 @@ FAINT_LABS = [r"$M_{\rm UV,lim}=-17.5$",
               r"$M_{\rm UV,lim}=-19.5$"]
 BKEY = "M21.5"
 
+# Prominent (darkest/thickest) = first-listed = M_UV,lim=-17.5 -> forward order.
 for i, (fkey, lab) in enumerate(zip(FAINT_KEYS, FAINT_LABS)):
-    plot_kde(ax, fid_105[BKEY][fkey],  COLOR_FID,  bw=0.3, ls=LINESTYLES[i])
-    plot_kde(ax, stoc_105[BKEY][fkey], COLOR_STOC, bw=0.3, ls=LINESTYLES[i])
+    plot_kde(ax, fid_105[BKEY][fkey],  COLORS_FID[i],  lw=LINEWIDTHS[i], bw=0.3)
+    plot_kde(ax, stoc_105[BKEY][fkey], COLORS_STOC[i], lw=LINEWIDTHS[i], bw=0.3)
 
 style_ax(ax, "Varying UV magnitude of photometric \nneighbors, " + r"$M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
-add_param_legend(ax, FAINT_LABS, linestyles=LINESTYLES)
+add_param_legend(ax, FAINT_LABS)
 
 # --- Panel 2: vary Muv,0 ---
 ax = axes[0]
@@ -143,19 +161,20 @@ BRIGHT_LABS = [r"$M_{\rm UV,0}=-22.0$",
                r"$M_{\rm UV,0}=-21.0$"]
 FKEY = "M18.5"
 
+# Prominent (darkest/thickest) = first-listed = M_UV,0=-22.0 (brightest) -> forward order.
 for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
     if bkey == "M22":
-        plot_kde(ax, fid_105[bkey][FKEY], COLOR_FID,  bw=0.4, ls=LINESTYLES[i])
-        plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw=0.3, ls=LINESTYLES[i])
+        plot_kde(ax, fid_105[bkey][FKEY], COLORS_FID[i],  lw=LINEWIDTHS[i], bw=0.4)
+        plot_kde(ax, stoc_105[bkey][FKEY], COLORS_STOC[i], lw=LINEWIDTHS[i], bw=0.3)
     else:
-        plot_kde(ax, fid_105[bkey][FKEY],  COLOR_FID,  bw = 0.3, ls=LINESTYLES[i])
-        plot_kde(ax, stoc_105[bkey][FKEY], COLOR_STOC, bw = 0.3, ls=LINESTYLES[i])
+        plot_kde(ax, fid_105[bkey][FKEY],  COLORS_FID[i],  lw=LINEWIDTHS[i], bw = 0.3)
+        plot_kde(ax, stoc_105[bkey][FKEY], COLORS_STOC[i], lw=LINEWIDTHS[i], bw = 0.3)
 
 style_ax(ax, "Varying UV magnitude of the bright \ngalaxy, "+r"$M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 # Shared model-color legend lives on this panel only.
 model_leg = add_model_legend(ax)
 ax.add_artist(model_leg)
-add_param_legend(ax, BRIGHT_LABS, linestyles=LINESTYLES)
+add_param_legend(ax, BRIGHT_LABS)
 
 # --- Panel 3: vary z ---
 ax = axes[2]
@@ -175,11 +194,13 @@ for i, (z, zlab) in enumerate(zip(REDSHIFTS, Z_LABS)):
     else:
         BW_FID = 0.15
         BW_STOC = 0.15
-    plot_kde(ax, fid_z[BKEY][FKEY],  COLOR_FID,  bw = BW_FID, ls=LINESTYLES[i])
-    plot_kde(ax, stoc_z[BKEY][FKEY], COLOR_STOC, bw = BW_STOC, ls=LINESTYLES[i])
+    plot_kde(ax, fid_z[BKEY][FKEY],  COLORS_FID_REV[i],  lw=LINEWIDTHS_REV[i], bw = BW_FID)
+    plot_kde(ax, stoc_z[BKEY][FKEY], COLORS_STOC_REV[i], lw=LINEWIDTHS_REV[i], bw = BW_STOC)
 
 style_ax(ax, r"Varying redshift, $z$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$")
-add_param_legend(ax, Z_LABS, linestyles=LINESTYLES)
+# Prominent (darkest/thickest) = z=8, which is last-listed in REDSHIFTS/Z_LABS above,
+# so the legend also needs the reversed gray/linewidth ramps to match the plotted lines.
+add_param_legend(ax, Z_LABS, grays=GRAYS_REV, linewidths=LINEWIDTHS_REV)
 
 fig.subplots_adjust(wspace=0.04, hspace=0.04)
 

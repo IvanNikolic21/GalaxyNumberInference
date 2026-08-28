@@ -181,39 +181,63 @@ class D1NRENetwork(nn.Module):
         return self.net(x).squeeze(-1)
 
 
-def _weighted_bce(criterion, logits_r, label_r, logits_f, label_f, weight):
-    """criterion must use reduction='none'. See train_nre.py's identical helper."""
+def _weighted_bce(criterion, logits_r, label_r, logits_f, label_f, weight, balance_lambda=0.0):
+    """criterion must use reduction='none'. See train_nre.py's identical helper for the
+    Balanced NRE math (Delaunoy et al. 2022, arXiv:2208.13624, Eq. 7). Returns
+    (total_loss, bce_loss, B); B is None when balance_lambda == 0 (vanilla NRE)."""
     loss_r = criterion(logits_r, label_r)
     loss_f = criterion(logits_f, label_f)
-    return ((loss_r + loss_f) * weight).sum() / weight.sum()
+    bce = ((loss_r + loss_f) * weight).sum() / weight.sum()
+
+    if balance_lambda > 0:
+        d_r = torch.sigmoid(logits_r)
+        d_f = torch.sigmoid(logits_f)
+        B = (d_r * weight).sum() / weight.sum() + (d_f * weight).sum() / weight.sum()
+        total = bce + balance_lambda * (B - 1.0) ** 2
+        return total, bce, B
+    return bce, bce, None
 
 
-def train_epoch(model, loader, optimizer, criterion, device):
+def train_epoch(model, loader, optimizer, criterion, device, balance_lambda=0.0):
     model.train()
     total_loss = 0.0
+    total_bce  = 0.0
+    total_B    = 0.0
     for x_real, label_r, x_fake, label_f, weight in loader:
         x_real, x_fake   = x_real.to(device), x_fake.to(device)
         label_r, label_f = label_r.to(device), label_f.to(device)
         weight = weight.to(device)
         optimizer.zero_grad()
-        loss = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f, weight)
+        loss, bce, B = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f,
+                                      weight, balance_lambda)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
-    return total_loss / len(loader)
+        total_bce  += bce.item()
+        if B is not None:
+            total_B += B.item()
+    n = len(loader)
+    return total_loss / n, total_bce / n, (total_B / n if balance_lambda > 0 else None)
 
 
-def val_epoch(model, loader, criterion, device):
+def val_epoch(model, loader, criterion, device, balance_lambda=0.0):
     model.eval()
     total_loss = 0.0
+    total_bce  = 0.0
+    total_B    = 0.0
     with torch.no_grad():
         for x_real, label_r, x_fake, label_f, weight in loader:
             x_real, x_fake   = x_real.to(device), x_fake.to(device)
             label_r, label_f = label_r.to(device), label_f.to(device)
             weight = weight.to(device)
-            loss = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f, weight)
+            loss, bce, B = _weighted_bce(criterion, model(x_real), label_r, model(x_fake), label_f,
+                                          weight, balance_lambda)
             total_loss += loss.item()
-    return total_loss / len(loader)
+            total_bce  += bce.item()
+            if B is not None:
+                total_B += B.item()
+    n = len(loader)
+    return total_loss / n, total_bce / n, (total_B / n if balance_lambda > 0 else None)
 
 
 def parse_args():
@@ -253,14 +277,21 @@ def parse_args():
                    help="Use projected 2D distance sqrt(dx²+dy²) instead of full 3D. "
                         "Matches real observations with angular separations only.")
     p.add_argument("--seed",             type=int,   default=42)
+    p.add_argument("--balanced", action="store_true",
+                   help="Train with the Balanced NRE regularization penalty (Delaunoy et al. "
+                        "2022, arXiv:2208.13624) instead of vanilla NRE. See train_nre.py's "
+                        "identical flag.")
+    p.add_argument("--balance-lambda", type=float, default=100.0,
+                   help="Strength of the balancing penalty (only used with --balanced).")
     return p.parse_args()
 
 
 def main():
     args = parse_args()
 
-    # Suffix output dir for angular-only models to avoid overwriting standard models
-    if args.only_angular:
+    # Suffix output dir for angular-only models to avoid overwriting standard models.
+    # Guarded against double-suffixing if the dir name already ends in it (see train_nre.py).
+    if args.only_angular and not args.output_dir.name.endswith("_only_ang"):
         args.output_dir = args.output_dir.parent / (args.output_dir.name + "_only_ang")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -355,14 +386,25 @@ def main():
     criterion = nn.BCEWithLogitsLoss(reduction='none')  # per-example, for _weighted_bce
 
     log.info(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    balance_lambda = args.balance_lambda if args.balanced else 0.0
+    if args.balanced:
+        log.info(f"Balanced NRE enabled (lambda={balance_lambda}). "
+                 f"A balanced classifier has B -> 1; watch it converge below.")
 
     best_val_loss = float('inf')
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_loss   = val_epoch(model, val_loader, criterion, device)
+        train_loss, train_bce, train_B = train_epoch(model, train_loader, optimizer, criterion,
+                                                       device, balance_lambda)
+        val_loss, val_bce, val_B       = val_epoch(model, val_loader, criterion, device,
+                                                     balance_lambda)
         scheduler.step()
 
-        log.info(f"Epoch {epoch:3d}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}")
+        if args.balanced:
+            log.info(f"Epoch {epoch:3d}/{args.epochs}  "
+                     f"train={train_loss:.4f} (bce={train_bce:.4f}, B={train_B:.4f})  "
+                     f"val={val_loss:.4f} (bce={val_bce:.4f}, B={val_B:.4f})")
+        else:
+            log.info(f"Epoch {epoch:3d}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -375,7 +417,9 @@ def main():
              dropout=args.dropout,
              input_dim=INPUT_DIM,
              summary_mode=2,  # 2 = d1 mode, distinct from 0=full, 1=summary
-             only_angular=int(args.only_angular))
+             only_angular=int(args.only_angular),
+             balanced=int(args.balanced),
+             balance_lambda=args.balance_lambda)
 
     log.info(f"Training complete. Best val loss: {best_val_loss:.4f}")
     log.info(f"Model saved to: {args.output_dir}")
