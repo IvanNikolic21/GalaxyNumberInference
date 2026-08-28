@@ -145,13 +145,15 @@ FAINT_LABS = [r"$M_{\rm UV,lim}=-17.5$",
               r"$M_{\rm UV,lim}=-19.5$"]
 BKEY = "M21.5"
 
-# Prominent (darkest/thickest) = first-listed = M_UV,lim=-17.5 -> forward order.
+# Prominent (darkest/thickest) = first-listed = M_UV,lim=-17.5 -> use the
+# REV ramps so index 0 (first-listed) maps to the darkest/thickest entry.
 for i, (fkey, lab) in enumerate(zip(FAINT_KEYS, FAINT_LABS)):
-    plot_kde(ax, fid_105[BKEY][fkey],  COLORS_FID[i],  lw=LINEWIDTHS[i], bw=0.3)
-    plot_kde(ax, stoc_105[BKEY][fkey], COLORS_STOC[i], lw=LINEWIDTHS[i], bw=0.3)
+    plot_kde(ax, fid_105[BKEY][fkey],  COLORS_FID_REV[i],  lw=LINEWIDTHS_REV[i], bw=0.3)
+    plot_kde(ax, stoc_105[BKEY][fkey], COLORS_STOC_REV[i], lw=LINEWIDTHS_REV[i], bw=0.3)
 
 style_ax(ax, "Varying UV magnitude of \nphotometric neighbors, " + r"$M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
-add_param_legend(ax, FAINT_LABS)
+# Labels are already listed darkest-first (matches the REV plotting order above).
+add_param_legend(ax, FAINT_LABS, grays=GRAYS_REV, linewidths=LINEWIDTHS_REV)
 
 # --- Panel 2: vary Muv,0 ---
 ax = axes[0]
@@ -161,20 +163,22 @@ BRIGHT_LABS = [r"$M_{\rm UV,0}=-22.0$",
                r"$M_{\rm UV,0}=-21.0$"]
 FKEY = "M18.5"
 
-# Prominent (darkest/thickest) = first-listed = M_UV,0=-22.0 (brightest) -> forward order.
+# Prominent (darkest/thickest) = first-listed = M_UV,0=-22.0 (brightest) -> use
+# the REV ramps so index 0 (first-listed) maps to the darkest/thickest entry.
 for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
     if bkey == "M22":
-        plot_kde(ax, fid_105[bkey][FKEY], COLORS_FID[i],  lw=LINEWIDTHS[i], bw=0.4)
-        plot_kde(ax, stoc_105[bkey][FKEY], COLORS_STOC[i], lw=LINEWIDTHS[i], bw=0.3)
+        plot_kde(ax, fid_105[bkey][FKEY], COLORS_FID_REV[i],  lw=LINEWIDTHS_REV[i], bw=0.4)
+        plot_kde(ax, stoc_105[bkey][FKEY], COLORS_STOC_REV[i], lw=LINEWIDTHS_REV[i], bw=0.3)
     else:
-        plot_kde(ax, fid_105[bkey][FKEY],  COLORS_FID[i],  lw=LINEWIDTHS[i], bw = 0.3)
-        plot_kde(ax, stoc_105[bkey][FKEY], COLORS_STOC[i], lw=LINEWIDTHS[i], bw = 0.3)
+        plot_kde(ax, fid_105[bkey][FKEY],  COLORS_FID_REV[i],  lw=LINEWIDTHS_REV[i], bw = 0.3)
+        plot_kde(ax, stoc_105[bkey][FKEY], COLORS_STOC_REV[i], lw=LINEWIDTHS_REV[i], bw = 0.3)
 
 style_ax(ax, "Varying UV magnitude of the\nbright galaxy, "+r"$M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 # Shared model-color legend lives on this panel only.
 model_leg = add_model_legend(ax)
 ax.add_artist(model_leg)
-add_param_legend(ax, BRIGHT_LABS)
+# Labels are already listed darkest-first (matches the REV plotting order above).
+add_param_legend(ax, BRIGHT_LABS, grays=GRAYS_REV, linewidths=LINEWIDTHS_REV)
 
 # --- Panel 3: vary z ---
 ax = axes[2]
@@ -194,13 +198,15 @@ for i, (z, zlab) in enumerate(zip(REDSHIFTS, Z_LABS)):
     else:
         BW_FID = 0.15
         BW_STOC = 0.15
-    plot_kde(ax, fid_z[BKEY][FKEY],  COLORS_FID_REV[i],  lw=LINEWIDTHS_REV[i], bw = BW_FID)
-    plot_kde(ax, stoc_z[BKEY][FKEY], COLORS_STOC_REV[i], lw=LINEWIDTHS_REV[i], bw = BW_STOC)
+    # Prominent (darkest/thickest) = z=8, which is last-listed here -> plain
+    # (forward) ramps, so index 2 (last-listed, z=8) lands on the darkest entry.
+    plot_kde(ax, fid_z[BKEY][FKEY],  COLORS_FID[i],  lw=LINEWIDTHS[i], bw = BW_FID)
+    plot_kde(ax, stoc_z[BKEY][FKEY], COLORS_STOC[i], lw=LINEWIDTHS[i], bw = BW_STOC)
 
 style_ax(ax, r"Varying redshift, $z$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$")
-# Prominent (darkest/thickest) = z=8, which is last-listed in REDSHIFTS/Z_LABS above,
-# so the legend also needs the reversed gray/linewidth ramps to match the plotted lines.
-add_param_legend(ax, Z_LABS, grays=GRAYS_REV, linewidths=LINEWIDTHS_REV)
+# Z_LABS is listed light-to-dark (z=14 first, z=8 last); reverse it here so the
+# legend always reads darkest-first, paired with the REV gray/linewidth ramps.
+add_param_legend(ax, Z_LABS[::-1], grays=GRAYS_REV, linewidths=LINEWIDTHS_REV)
 
 fig.subplots_adjust(wspace=0.04, hspace=0.04)
 
