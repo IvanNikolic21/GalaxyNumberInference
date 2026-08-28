@@ -105,8 +105,8 @@ def add_model_legend(ax, loc='upper right'):
     """Color legend mapping model -> hue, meant to be shown on one panel only.
     Uses the medium shade of each model's ramp as the representative swatch."""
     handles = [
-        Line2D([0], [0], color=COLORS_FID[1],  lw=3, label='high\nluminosity'),
-        Line2D([0], [0], color=COLORS_STOC[1], lw=3, label='high\nstochasticity'),
+        Line2D([0], [0], color=COLORS_FID[1],  lw=3, label='High\nluminosity'),
+        Line2D([0], [0], color=COLORS_STOC[1], lw=3, label='High\nstochasticity'),
     ]
     return ax.legend(handles=handles, loc=loc, fontsize=15, frameon=False, handlelength=1.5)
 
@@ -116,7 +116,7 @@ def style_ax(ax, title, show_ylabel=False):
     ax.set_ylim(0, 1.4)
     ax.set_xlabel(r"$d_1$ [cMpc]", fontsize=13)
     if show_ylabel:
-        ax.set_ylabel(r"PDF$(d_1)$", fontsize=13)
+        ax.set_ylabel(r"p(d_1)$", fontsize=13)
     ax.set_title(title, fontsize=13)
     # ticks = [0.6, 1, 2, 3, 4]
     # ax.xaxis.set_major_locator(FixedLocator(ticks))
@@ -150,7 +150,7 @@ for i, (fkey, lab) in enumerate(zip(FAINT_KEYS, FAINT_LABS)):
     plot_kde(ax, fid_105[BKEY][fkey],  COLORS_FID[i],  lw=LINEWIDTHS[i], bw=0.3)
     plot_kde(ax, stoc_105[BKEY][fkey], COLORS_STOC[i], lw=LINEWIDTHS[i], bw=0.3)
 
-style_ax(ax, "Varying UV magnitude of photometric \nneighbors, " + r"$M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
+style_ax(ax, "Varying UV magnitude of \nphotometric neighbors, " + r"$M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
 add_param_legend(ax, FAINT_LABS)
 
 # --- Panel 2: vary Muv,0 ---
@@ -170,7 +170,7 @@ for i, (bkey, lab) in enumerate(zip(BRIGHT_KEYS, BRIGHT_LABS)):
         plot_kde(ax, fid_105[bkey][FKEY],  COLORS_FID[i],  lw=LINEWIDTHS[i], bw = 0.3)
         plot_kde(ax, stoc_105[bkey][FKEY], COLORS_STOC[i], lw=LINEWIDTHS[i], bw = 0.3)
 
-style_ax(ax, "Varying UV magnitude of the bright \ngalaxy, "+r"$M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
+style_ax(ax, "Varying UV magnitude of the\nbright galaxy, "+r"$M_{\rm UV,0}$" + "\n" + r"$M_{\rm UV,lim}=-18.5$, $z=10.5$", show_ylabel=True)
 # Shared model-color legend lives on this panel only.
 model_leg = add_model_legend(ax)
 ax.add_artist(model_leg)
