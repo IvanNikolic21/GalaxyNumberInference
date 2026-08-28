@@ -116,7 +116,7 @@ def style_ax(ax, title, show_ylabel=False):
     ax.set_ylim(0, 1.4)
     ax.set_xlabel(r"$d_1$ [cMpc]", fontsize=13)
     if show_ylabel:
-        ax.set_ylabel(r"p(d_1)$", fontsize=13)
+        ax.set_ylabel(r"p$(d_1)$", fontsize=13)
     ax.set_title(title, fontsize=13)
     # ticks = [0.6, 1, 2, 3, 4]
     # ax.xaxis.set_major_locator(FixedLocator(ticks))
