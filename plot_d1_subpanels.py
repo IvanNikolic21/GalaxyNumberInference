@@ -68,7 +68,7 @@ COLORS_STOC_REV = COLORS_STOC[::-1]
 
 # Linewidths — tied to shade: lightest shade is thinnest, darkest is
 # thickest, so the two encodings reinforce the same visual hierarchy.
-LINEWIDTHS = [1.4, 2.2, 3.0]
+LINEWIDTHS = [2.4, 3.2, 4.0]
 LINEWIDTHS_REV = LINEWIDTHS[::-1]
 
 # Neutral grayscale ramp used only for the parameter-value legend swatches,
@@ -198,15 +198,15 @@ for i, (z, zlab) in enumerate(zip(REDSHIFTS, Z_LABS)):
     else:
         BW_FID = 0.15
         BW_STOC = 0.15
-    # Prominent (darkest/thickest) = z=8, which is last-listed here -> plain
-    # (forward) ramps, so index 2 (last-listed, z=8) lands on the darkest entry.
-    plot_kde(ax, fid_z[BKEY][FKEY],  COLORS_FID[i],  lw=LINEWIDTHS[i], bw = BW_FID)
-    plot_kde(ax, stoc_z[BKEY][FKEY], COLORS_STOC[i], lw=LINEWIDTHS[i], bw = BW_STOC)
+    # Prominent (darkest/thickest) = z=14, which is first-listed here -> REV
+    # ramps, so index 0 (first-listed, z=14) lands on the darkest entry.
+    plot_kde(ax, fid_z[BKEY][FKEY],  COLORS_FID_REV[i],  lw=LINEWIDTHS_REV[i], bw = BW_FID)
+    plot_kde(ax, stoc_z[BKEY][FKEY], COLORS_STOC_REV[i], lw=LINEWIDTHS_REV[i], bw = BW_STOC)
 
 style_ax(ax, r"Varying redshift, $z$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $M_{\rm UV,lim}=-18.5$")
-# Z_LABS is listed light-to-dark (z=14 first, z=8 last); reverse it here so the
-# legend always reads darkest-first, paired with the REV gray/linewidth ramps.
-add_param_legend(ax, Z_LABS[::-1], grays=GRAYS_REV, linewidths=LINEWIDTHS_REV)
+# Z_LABS is already listed darkest-first (z=14 first, matches the REV plotting
+# order above), so no reversal needed here -- same pattern as panels 1 and 2.
+add_param_legend(ax, Z_LABS, grays=GRAYS_REV, linewidths=LINEWIDTHS_REV)
 
 fig.subplots_adjust(wspace=0.04, hspace=0.04)
 
