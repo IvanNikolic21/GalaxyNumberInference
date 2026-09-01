@@ -47,6 +47,7 @@ import argparse
 import logging
 from pathlib import Path
 
+import h5py
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -54,6 +55,17 @@ import matplotlib.pyplot as plt
 
 from galaxy_neighbors import AnalysisConfig, run_neighbor_analysis, _mag_to_key
 from run_ks import REDSHIFT_CONFIGS, N_REALIZATIONS  # reuse the same path registry as run_ks.py
+
+
+def available_realizations(path: Path) -> int:
+    """Actual number of realizations stored in a muv catalog's 'data' dataset.
+
+    run_neighbor_analysis indexes f["data"][idx] directly per realization
+    (not a bounds-safe slice), so requesting more than this raises an
+    IndexError deep inside galaxy_neighbors.py -- check first instead.
+    """
+    with h5py.File(path, "r") as f:
+        return f["data"].shape[0]
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s",
                      datefmt="%H:%M:%S")
@@ -132,6 +144,15 @@ def main():
 
     z_cfg = REDSHIFT_CONFIGS[args.redshift]
     n_realizations = args.n_realizations or N_REALIZATIONS[args.redshift]
+
+    n_avail_fid  = available_realizations(z_cfg.muv_fiducial_path)
+    n_avail_stoc = available_realizations(z_cfg.muv_stochastic_path)
+    n_avail = min(n_avail_fid, n_avail_stoc)
+    if n_realizations > n_avail:
+        log.warning(f"Requested n_realizations={n_realizations}, but fiducial catalog has "
+                    f"{n_avail_fid} and stochastic has {n_avail_stoc} available -- "
+                    f"clipping to {n_avail}.")
+        n_realizations = n_avail
 
     cfg = AnalysisConfig(
         bright_limits=[args.muv0],
