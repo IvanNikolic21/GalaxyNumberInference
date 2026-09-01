@@ -53,10 +53,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from galaxy_neighbors import AnalysisConfig, run_neighbor_analysis, _mag_to_key, load_muv_catalog
-from run_ks import (  # reuse the same path registry + UVLF/areal-density machinery as run_ks.py
-    REDSHIFT_CONFIGS, N_REALIZATIONS, get_LF, _surface_density_arcmin2,
-)
+from galaxy_neighbors import AnalysisConfig, run_neighbor_analysis, _mag_to_key
+from run_ks import REDSHIFT_CONFIGS, N_REALIZATIONS  # reuse the same path registry as run_ks.py
 
 
 def available_realizations(path: Path) -> int:
@@ -178,33 +176,27 @@ def main():
              f"mean count={counts_stoc.mean():.2f}, max={counts_stoc.max()}")
 
     # ------------------------------------------------------------------
-    # Expected abundance of bright (target) galaxies themselves, M_UV < muv0
-    # -- two independent estimates as a cross-check:
-    #   (1) UVLF-based areal density, same machinery as run_ks.py's
-    #       required-survey-area calculation (get_LF + _surface_density_arcmin2)
-    #   (2) raw simulated count, direct from the same realizations already
-    #       loaded above (no smoothing/UVLF fit)
+    # Expected number of FAINT neighbors (M_UV < muvlim) within the FoV
+    # aperture per pointing, for both models -- this is just a clearer
+    # summary of counts_fid/counts_stoc themselves (already the per-pointing
+    # neighbor counts the whole forecast is built from), not a separate
+    # calculation.
     # ------------------------------------------------------------------
-    log.info("Computing expected bright-galaxy abundance for both models ...")
-    muvs_fid_all  = load_muv_catalog(z_cfg.muv_fiducial_path,   index=None, n_realizations=n_realizations)
-    muvs_stoc_all = load_muv_catalog(z_cfg.muv_stochastic_path, index=None, n_realizations=n_realizations)
-    uvlf_bins_fid,  uvlf_phi_fid  = get_LF(muvs_fid_all,  n_realizations=n_realizations)
-    uvlf_bins_stoc, uvlf_phi_stoc = get_LF(muvs_stoc_all, n_realizations=n_realizations)
-    density_fid_arcmin2  = _surface_density_arcmin2(uvlf_bins_fid,  uvlf_phi_fid,  args.muv0, args.redshift)
-    density_stoc_arcmin2 = _surface_density_arcmin2(uvlf_bins_stoc, uvlf_phi_stoc, args.muv0, args.redshift)
-    raw_per_realization_fid  = len(counts_fid)  / n_realizations
-    raw_per_realization_stoc = len(counts_stoc) / n_realizations
+    mean_fid,  std_fid  = counts_fid.mean(),  counts_fid.std()
+    mean_stoc, std_stoc = counts_stoc.mean(), counts_stoc.std()
+    p16_fid,  p50_fid,  p84_fid  = np.percentile(counts_fid,  [16, 50, 84])
+    p16_stoc, p50_stoc, p84_stoc = np.percentile(counts_stoc, [16, 50, 84])
+    frac_zero_fid  = float((counts_fid  == 0).mean())
+    frac_zero_stoc = float((counts_stoc == 0).mean())
 
-    print(f"\nExpected abundance of bright (M_UV < {args.muv0}) target galaxies at z={args.redshift}")
-    print(f"  {'model':<12}  {'UVLF areal density':>22}  {'raw sim, per box/realization':>30}")
-    print(f"  {'-'*66}")
-    print(f"  {'fiducial':<12}  {density_fid_arcmin2:>12.4f} arcmin^-2  "
-          f"({density_fid_arcmin2*3600:>8.2f} deg^-2)  {raw_per_realization_fid:>10.2f}")
-    print(f"  {'stochastic':<12}  {density_stoc_arcmin2:>12.4f} arcmin^-2  "
-          f"({density_stoc_arcmin2*3600:>8.2f} deg^-2)  {raw_per_realization_stoc:>10.2f}")
-    print(f"  (UVLF areal density uses the same dV/dOmega/dz conversion as run_ks.py's "
-          f"required-survey-area calc, delta_z=1.0 default; raw sim column is the direct "
-          f"realization-averaged count from the same catalogs loaded above, no UVLF fit.)")
+    print(f"\nExpected number of faint (M_UV < {args.muvlim}) neighbors within the "
+          f"{args.area_arcmin2} arcmin^2 FoV, per bright-galaxy pointing:")
+    print(f"  {'model':<12}  {'mean +/- std':>16}  {'median [16,84]':>20}  {'P(n=0)':>8}")
+    print(f"  {'-'*62}")
+    print(f"  {'fiducial':<12}  {mean_fid:>6.2f} +/- {std_fid:<6.2f}  "
+          f"{p50_fid:>6.1f} [{p16_fid:.1f},{p84_fid:.1f}]  {frac_zero_fid:>8.3f}")
+    print(f"  {'stochastic':<12}  {mean_stoc:>6.2f} +/- {std_stoc:<6.2f}  "
+          f"{p50_stoc:>6.1f} [{p16_stoc:.1f},{p84_stoc:.1f}]  {frac_zero_stoc:>8.3f}")
 
     log.info(f"Bootstrapping sigma(N) for N={args.n_values}, {args.n_trials} trials each ...")
     result = forecast_sigma_vs_n(counts_fid, counts_stoc, args.n_values, args.n_trials, rng)
@@ -230,8 +222,8 @@ def main():
         **{f"fid_true_N{N}": result["fid_true"][N] for N in args.n_values},
         **{f"stoc_true_N{N}": result["stoc_true"][N] for N in args.n_values},
         counts_fid=counts_fid, counts_stoc=counts_stoc,
-        density_fid_arcmin2=density_fid_arcmin2, density_stoc_arcmin2=density_stoc_arcmin2,
-        raw_per_realization_fid=raw_per_realization_fid, raw_per_realization_stoc=raw_per_realization_stoc,
+        mean_fid=mean_fid, std_fid=std_fid, mean_stoc=mean_stoc, std_stoc=std_stoc,
+        frac_zero_fid=frac_zero_fid, frac_zero_stoc=frac_zero_stoc,
     )
 
     # ------------------------------------------------------------------
@@ -252,8 +244,7 @@ def main():
     ax.set_ylabel(r"significance [$\sigma$]")
     ax.set_title(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$\n"
                  rf"$M_{{\rm UV,0}}={args.muv0}$, $M_{{\rm UV,lim}}={args.muvlim}$"
-                 "\n" rf"bright targets/deg$^2$: fid={density_fid_arcmin2*3600:.1f}, "
-                 rf"stoc={density_stoc_arcmin2*3600:.1f}",
+                 "\n" rf"$\langle n\rangle$ per pointing: fid={mean_fid:.2f}, stoc={mean_stoc:.2f}",
                  fontsize=11)
     ax.legend(fontsize=11, frameon=False)
     fig.tight_layout()
