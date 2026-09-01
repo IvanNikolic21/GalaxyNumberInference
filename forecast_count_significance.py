@@ -53,8 +53,10 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from galaxy_neighbors import AnalysisConfig, run_neighbor_analysis, _mag_to_key
-from run_ks import REDSHIFT_CONFIGS, N_REALIZATIONS  # reuse the same path registry as run_ks.py
+from galaxy_neighbors import AnalysisConfig, run_neighbor_analysis, _mag_to_key, load_muv_catalog
+from run_ks import (  # reuse the same path registry + UVLF/areal-density machinery as run_ks.py
+    REDSHIFT_CONFIGS, N_REALIZATIONS, get_LF, _surface_density_arcmin2,
+)
 
 
 def available_realizations(path: Path) -> int:
@@ -175,6 +177,35 @@ def main():
     log.info(f"  stochastic: {len(counts_stoc)} bright galaxies, "
              f"mean count={counts_stoc.mean():.2f}, max={counts_stoc.max()}")
 
+    # ------------------------------------------------------------------
+    # Expected abundance of bright (target) galaxies themselves, M_UV < muv0
+    # -- two independent estimates as a cross-check:
+    #   (1) UVLF-based areal density, same machinery as run_ks.py's
+    #       required-survey-area calculation (get_LF + _surface_density_arcmin2)
+    #   (2) raw simulated count, direct from the same realizations already
+    #       loaded above (no smoothing/UVLF fit)
+    # ------------------------------------------------------------------
+    log.info("Computing expected bright-galaxy abundance for both models ...")
+    muvs_fid_all  = load_muv_catalog(z_cfg.muv_fiducial_path,   index=None, n_realizations=n_realizations)
+    muvs_stoc_all = load_muv_catalog(z_cfg.muv_stochastic_path, index=None, n_realizations=n_realizations)
+    uvlf_bins_fid,  uvlf_phi_fid  = get_LF(muvs_fid_all,  n_realizations=n_realizations)
+    uvlf_bins_stoc, uvlf_phi_stoc = get_LF(muvs_stoc_all, n_realizations=n_realizations)
+    density_fid_arcmin2  = _surface_density_arcmin2(uvlf_bins_fid,  uvlf_phi_fid,  args.muv0, args.redshift)
+    density_stoc_arcmin2 = _surface_density_arcmin2(uvlf_bins_stoc, uvlf_phi_stoc, args.muv0, args.redshift)
+    raw_per_realization_fid  = len(counts_fid)  / n_realizations
+    raw_per_realization_stoc = len(counts_stoc) / n_realizations
+
+    print(f"\nExpected abundance of bright (M_UV < {args.muv0}) target galaxies at z={args.redshift}")
+    print(f"  {'model':<12}  {'UVLF areal density':>22}  {'raw sim, per box/realization':>30}")
+    print(f"  {'-'*66}")
+    print(f"  {'fiducial':<12}  {density_fid_arcmin2:>12.4f} arcmin^-2  "
+          f"({density_fid_arcmin2*3600:>8.2f} deg^-2)  {raw_per_realization_fid:>10.2f}")
+    print(f"  {'stochastic':<12}  {density_stoc_arcmin2:>12.4f} arcmin^-2  "
+          f"({density_stoc_arcmin2*3600:>8.2f} deg^-2)  {raw_per_realization_stoc:>10.2f}")
+    print(f"  (UVLF areal density uses the same dV/dOmega/dz conversion as run_ks.py's "
+          f"required-survey-area calc, delta_z=1.0 default; raw sim column is the direct "
+          f"realization-averaged count from the same catalogs loaded above, no UVLF fit.)")
+
     log.info(f"Bootstrapping sigma(N) for N={args.n_values}, {args.n_trials} trials each ...")
     result = forecast_sigma_vs_n(counts_fid, counts_stoc, args.n_values, args.n_trials, rng)
 
@@ -199,6 +230,8 @@ def main():
         **{f"fid_true_N{N}": result["fid_true"][N] for N in args.n_values},
         **{f"stoc_true_N{N}": result["stoc_true"][N] for N in args.n_values},
         counts_fid=counts_fid, counts_stoc=counts_stoc,
+        density_fid_arcmin2=density_fid_arcmin2, density_stoc_arcmin2=density_stoc_arcmin2,
+        raw_per_realization_fid=raw_per_realization_fid, raw_per_realization_stoc=raw_per_realization_stoc,
     )
 
     # ------------------------------------------------------------------
@@ -218,7 +251,10 @@ def main():
     ax.set_xlabel("N (independent pointings)")
     ax.set_ylabel(r"significance [$\sigma$]")
     ax.set_title(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$\n"
-                 rf"$M_{{\rm UV,0}}={args.muv0}$, $M_{{\rm UV,lim}}={args.muvlim}$")
+                 rf"$M_{{\rm UV,0}}={args.muv0}$, $M_{{\rm UV,lim}}={args.muvlim}$"
+                 "\n" rf"bright targets/deg$^2$: fid={density_fid_arcmin2*3600:.1f}, "
+                 rf"stoc={density_stoc_arcmin2*3600:.1f}",
+                 fontsize=11)
     ax.legend(fontsize=11, frameon=False)
     fig.tight_layout()
     fig.savefig(args.output_dir / f"count_sigma_z{args.redshift}_M{bright_key}_lim{faint_key}.pdf")
