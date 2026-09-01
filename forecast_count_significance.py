@@ -129,7 +129,7 @@ def parse_args():
     p.add_argument("--n-realizations", type=int, default=None,
                    help="How many mock catalog realizations to load per model when building the "
                         "count PMFs. Defaults to run_ks.py's N_REALIZATIONS for --redshift.")
-    p.add_argument("--n-values", type=int, nargs="+", default=[2, 3, 4, 5],
+    p.add_argument("--n-values", type=int, nargs="+", default=[1, 2, 3, 4, 5],
                    help="Number of independent pointings to forecast sigma at.")
     p.add_argument("--n-trials", type=int, default=2000, help="Bootstrap trials per N.")
     p.add_argument("--seed", type=int, default=42)
