@@ -3,35 +3,44 @@
 forecast_d1_significance.py
 -----------------------------
 Companion to forecast_count_significance.py, for the JWST proposal
-,instead of raw neighbor counts, forecast the MEAN distance to the
-nearest neighbor (d1) as a function of the number of pointings N, 
-with bootstrap error bars. Design target - the plot this script makes is
-exactly what's needed to check that by eye.
+discussion with Charlotte: forecast the MEAN distance to the nearest
+neighbor (d1) as a function of the number of pointings N, with bootstrap
+error bars, reported in arcmin.
 
-Reuses galaxy_d1s.compute_d1s directly (same min_neighbors filtering
-convention as run_analysis.py/run_ks.py) rather than re-deriving d1 from
-scratch, so this is methodologically consistent with the rest of Paper I,
-not a parallel reimplementation.
+Per Ivan's 2026-09-02 correction: the proposal targets NIRCam imaging
+without spectroscopy, so 3D distances (this script's earlier version) are
+not observable -- only angular position plus a photometric-redshift
+window. This version instead uses the pencil-beam approach already
+established in Paper I Sect. 3.4 ("Angular separation of galaxies"):
+search a narrow angular aperture (half_side_xy, from
+AnalysisConfig.survey_area_arcmin2, same convention/caveat as
+forecast_count_significance.py) but a wide line-of-sight window
+(half_side_z, from --photo-z-uncertainty, default Delta_z=0.5 -- Paper I's
+own fiducial choice, motivated there by typical medium-band photo-z
+uncertainty), then report the PROJECTED (2D, sqrt(dx^2+dy^2)) distance to
+the nearest candidate within that pencil beam, not the 3D distance.
+
+This bypasses run_neighbor_analysis/GalaxyModel.run() (which only ever
+searches an isotropic box) and instead calls find_neighbors_in_box()
+directly per bright galaxy -- the same direct-loop pattern already used in
+build_nre_database.py's process_one() and check_theta_degeneracy.py's
+d1_distribution_for_theta(), just computing a 2D distance from the
+returned candidate coordinates instead of the 3D one.
 
 For each of --n-trials bootstrap trials and each N in --n-values:
-    draw N d1 values (with replacement) from the model's pooled, filtered
-    d1 array, take their mean.
-This gives, per model per N, a distribution of "mean d1 at that N" --
-its spread IS the bootstrap error. Also reports a
-derived separation-in-sigma = |mean_fid - mean_stoc| / sqrt(std_fid^2 +
-std_stoc^2), for direct comparison with forecast_count_significance.py's
-log-likelihood-ratio sigma (not the primary deliverable here, but useful
-context since both scripts should tell a consistent story).
-
-All physical/observational choices are CLI flags. See the aperture-
-convention note in forecast_count_significance.py's docstring -- the same
-4x-area caveat applies here (both scripts route through
-AnalysisConfig.survey_area_arcmin2 -> search_box_mpc identically).
+    draw N (2D, arcmin) d1 values (with replacement) from the model's
+    pooled, filtered d1 array, take their mean.
+This gives, per model per N, a distribution of "mean d1 at that N" -- its
+spread IS the bootstrap error. Also reports a derived separation-in-sigma
+= |mean_fid - mean_stoc| / sqrt(std_fid^2 + std_stoc^2), for direct
+comparison with forecast_count_significance.py's log-likelihood-ratio
+sigma.
 
 Usage
 -----
     python forecast_d1_significance.py \\
         --redshift 14.0 --area-arcmin2 4.84 --muv0 -20.5 --muvlim -18.0 \\
+        --photo-z-uncertainty 0.5 \\
         --n-values 1 2 5 --n-realizations 100 --n-trials 2000 \\
         --output-dir /groups/astro/ivannik/projects/Neighbors/d1_forecast
 """
@@ -44,9 +53,10 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from astropy import units as u
+from astropy.cosmology import Planck18 as cosmo
 
-from galaxy_neighbors import AnalysisConfig, run_neighbor_analysis, _mag_to_key
-from galaxy_d1s import D1sConfig, compute_d1s
+from galaxy_neighbors import AnalysisConfig, load_halo_catalog, load_muv_catalog, find_neighbors_in_box
 from run_ks import REDSHIFT_CONFIGS, N_REALIZATIONS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -60,6 +70,42 @@ def available_realizations(path: Path) -> int:
     import h5py
     with h5py.File(path, "r") as f:
         return f["data"].shape[0]
+
+
+def pencil_beam_d1_arcmin(
+    muv_path: Path, halo_coords: np.ndarray, bright_limit: float, faint_limit: float,
+    half_side_xy: float, half_side_z_lower: float, half_side_z_upper: float,
+    n_realizations: int, redshift: float, min_neighbors: int,
+) -> np.ndarray:
+    """Pooled, projected (2D) d1 values [arcmin] across n_realizations mock
+    catalogs, using a pencil-beam search (narrow xy, wide z) rather than an
+    isotropic box -- see module docstring."""
+    kpc_per_arcmin = cosmo.kpc_comoving_per_arcmin(redshift).to(u.Mpc / u.arcmin).value
+
+    d1_values_mpc = []
+    for idx in range(n_realizations):
+        muvs = load_muv_catalog(muv_path, index=idx)
+        bright_mask = muvs < bright_limit
+        faint_mask  = (muvs < faint_limit) & (muvs >= bright_limit)
+
+        bright_coords = halo_coords[bright_mask]
+        faint_coords  = halo_coords[faint_mask]
+        faint_mags    = muvs[faint_mask]
+
+        for bright_coord in bright_coords:
+            _, matched_coords, _ = find_neighbors_in_box(
+                bright_coord, faint_coords, faint_mags,
+                half_side=half_side_xy, faint_limit=faint_limit,
+                half_side_z_lower=half_side_z_lower, half_side_z_upper=half_side_z_upper,
+            )
+            if len(matched_coords) < min_neighbors:
+                continue
+            d2d = np.sqrt((matched_coords[:, 0] - bright_coord[0]) ** 2 +
+                          (matched_coords[:, 1] - bright_coord[1]) ** 2)
+            d1_values_mpc.append(d2d.min())
+
+    d1_values_mpc = np.array(d1_values_mpc)
+    return d1_values_mpc / kpc_per_arcmin  # cMpc -> arcmin
 
 
 def bootstrap_mean_vs_n(d1_arr: np.ndarray, n_values: list[int], n_trials: int,
@@ -79,13 +125,18 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--redshift", type=float, required=True, choices=sorted(REDSHIFT_CONFIGS.keys()))
-    p.add_argument("--area-arcmin2", type=float, required=True)
+    p.add_argument("--area-arcmin2", type=float, required=True,
+                   help="Sets the angular (xy) aperture half-width -- see the aperture-convention "
+                        "note in forecast_count_significance.py (same 4x-area caveat applies).")
     p.add_argument("--muv0", type=float, required=True)
     p.add_argument("--muvlim", type=float, required=True)
+    p.add_argument("--photo-z-uncertainty", type=float, default=0.5,
+                   help="Line-of-sight pencil-beam half-width, as a redshift interval Delta_z. "
+                        "Default 0.5 is Paper I Sect. 3.4's own fiducial choice, motivated there by "
+                        "typical medium-band photo-z uncertainty.")
     p.add_argument("--min-neighbors", type=int, default=1,
-                   help="Passed to D1sConfig -- environments with fewer detected neighbors than "
-                        "this are excluded from the d1 distribution entirely (same convention as "
-                        "run_analysis.py). Default 1: at least one neighbor required to have a d1.")
+                   help="Minimum number of candidates found within the pencil beam for a bright "
+                        "galaxy to contribute a d1 value at all.")
     p.add_argument("--n-realizations", type=int, default=None)
     p.add_argument("--n-values", type=int, nargs="+", default=[1, 2, 5])
     p.add_argument("--n-trials", type=int, default=2000)
@@ -112,35 +163,52 @@ def main():
         n_realizations = n_avail
 
     cfg = AnalysisConfig(
-        bright_limits=[args.muv0],
-        faint_limits=[args.muvlim],
-        preselect_faint_limit=args.muvlim,
-        survey_area_arcmin2=args.area_arcmin2,
+        bright_limits=[args.muv0], faint_limits=[args.muvlim],
+        preselect_faint_limit=args.muvlim, survey_area_arcmin2=args.area_arcmin2,
     )
-    d1s_cfg = D1sConfig(min_neighbors=args.min_neighbors)
-    bright_key, faint_key = _mag_to_key(args.muv0), _mag_to_key(args.muvlim)
+    half_side_xy = cfg.search_box_mpc(args.redshift)
 
-    log.info(f"z={args.redshift}  area={args.area_arcmin2} arcmin^2  "
-             f"M_UV,0={args.muv0}  M_UV,lim={args.muvlim}  n_realizations={n_realizations}")
-    log.info("Running neighbor search ...")
-    results_fid, results_stoc = run_neighbor_analysis(
-        redshift_cfg=z_cfg, analysis_cfg=cfg, n_realizations=n_realizations,
+    dz = args.photo_z_uncertainty
+    half_side_z_upper = (cosmo.comoving_distance(args.redshift + dz)
+                          - cosmo.comoving_distance(args.redshift)).to(u.Mpc).value
+    half_side_z_lower = (cosmo.comoving_distance(args.redshift)
+                          - cosmo.comoving_distance(args.redshift - dz)).to(u.Mpc).value
+
+    bright_key, faint_key = cfg.bright_names[0], cfg.faint_names[0]
+
+    log.info(f"z={args.redshift}  area={args.area_arcmin2} arcmin^2  M_UV,0={args.muv0}  "
+             f"M_UV,lim={args.muvlim}  n_realizations={n_realizations}")
+    log.info(f"Pencil beam: half_side_xy={half_side_xy:.2f} cMpc, "
+             f"half_side_z=[{half_side_z_lower:.1f},{half_side_z_upper:.1f}] cMpc "
+             f"(Delta_z={dz})")
+
+    log.info("Loading halo catalog (shared across all realizations) ...")
+    halo_coords, _ = load_halo_catalog(z_cfg.halo_catalog_path)
+
+    log.info("Computing projected d1 (fiducial) ...")
+    d1_fid = pencil_beam_d1_arcmin(
+        z_cfg.muv_fiducial_path, halo_coords, args.muv0, args.muvlim,
+        half_side_xy, half_side_z_lower, half_side_z_upper,
+        n_realizations, args.redshift, args.min_neighbors,
     )
-    d1s_fid  = compute_d1s(results_fid,  cfg, z_cfg, d1s_cfg)
-    d1s_stoc = compute_d1s(results_stoc, cfg, z_cfg, d1s_cfg)
-    d1_fid  = d1s_fid[bright_key][faint_key]
-    d1_stoc = d1s_stoc[bright_key][faint_key]
-    log.info(f"  fiducial:   {len(d1_fid)} usable environments (>= {args.min_neighbors} neighbor(s)), "
-             f"mean d1={d1_fid.mean():.3f} cMpc, std={d1_fid.std():.3f}")
-    log.info(f"  stochastic: {len(d1_stoc)} usable environments (>= {args.min_neighbors} neighbor(s)), "
-             f"mean d1={d1_stoc.mean():.3f} cMpc, std={d1_stoc.std():.3f}")
+    log.info("Computing projected d1 (stochastic) ...")
+    d1_stoc = pencil_beam_d1_arcmin(
+        z_cfg.muv_stochastic_path, halo_coords, args.muv0, args.muvlim,
+        half_side_xy, half_side_z_lower, half_side_z_upper,
+        n_realizations, args.redshift, args.min_neighbors,
+    )
+    log.info(f"  fiducial:   {len(d1_fid)} usable environments, mean d1={d1_fid.mean():.3f} arcmin, "
+             f"std={d1_fid.std():.3f}")
+    log.info(f"  stochastic: {len(d1_stoc)} usable environments, mean d1={d1_stoc.mean():.3f} arcmin, "
+             f"std={d1_stoc.std():.3f}")
 
     log.info(f"Bootstrapping mean d1 vs N for N={args.n_values}, {args.n_trials} trials each ...")
     boot_fid  = bootstrap_mean_vs_n(d1_fid,  args.n_values, args.n_trials, rng)
     boot_stoc = bootstrap_mean_vs_n(d1_stoc, args.n_values, args.n_trials, rng)
 
-    print(f"\nMean d1 [cMpc] vs N, bootstrapped ({args.n_trials} trials/N), "
-          f"z={args.redshift}, M_UV,0={args.muv0}, M_UV,lim={args.muvlim}, area={args.area_arcmin2} arcmin^2")
+    print(f"\nMean d1 [arcmin] vs N, bootstrapped ({args.n_trials} trials/N), "
+          f"z={args.redshift}, M_UV,0={args.muv0}, M_UV,lim={args.muvlim}, area={args.area_arcmin2} arcmin^2, "
+          f"Delta_z={dz}")
     print(f"{'N':>4}  {'fiducial: median [2.5,97.5]':>28}  {'stochastic: median [2.5,97.5]':>28}  "
           f"{'overlap?':>10}  {'separation [sigma]':>18}")
     print("-" * 96)
@@ -158,36 +226,40 @@ def main():
                            overlap=overlap, sep_sigma=sep_sigma)
 
     np.savez(
-        args.output_dir / f"d1_meanboot_z{args.redshift}_M{bright_key}_lim{faint_key}.npz",
+        args.output_dir / f"d1_meanboot_arcmin_z{args.redshift}_M{bright_key}_lim{faint_key}.npz",
         n_values=np.array(args.n_values),
         **{f"fid_N{N}": boot_fid[N] for N in args.n_values},
         **{f"stoc_N{N}": boot_stoc[N] for N in args.n_values},
-        d1_fid=d1_fid, d1_stoc=d1_stoc,
+        d1_fid=d1_fid, d1_stoc=d1_stoc, photo_z_uncertainty=dz,
     )
 
     # ------------------------------------------------------------------
-    # Plot -- exactly the "does N=2 overlap, N=5 separate" check
+    # Plot -- exactly the "does N=2 overlap, N=5 separate" check, in arcmin.
+    # Stochastic model's points are shifted slightly in x so the two
+    # error bars don't sit directly on top of each other (Charlotte's request).
     # ------------------------------------------------------------------
     plt.style.use("seaborn-v0_8-ticks")
     plt.rcParams.update({"font.size": 14, "xtick.top": True, "ytick.right": True,
                          "xtick.direction": "in", "ytick.direction": "in"})
     fig, ax = plt.subplots(figsize=(6, 5))
-    for boot, color, label in [(boot_fid, "#d94701", "high luminosity"),
-                                (boot_stoc, "#2171b5", "high stochasticity")]:
-        meds = [np.percentile(boot[N], 50) for N in args.n_values]
-        los  = [np.percentile(boot[N], 2.5) for N in args.n_values]
-        his  = [np.percentile(boot[N], 97.5) for N in args.n_values]
-        ax.errorbar(args.n_values, meds,
-                     yerr=[np.array(meds) - np.array(los), np.array(his) - np.array(meds)],
+    x_offset = 0.08
+    for boot, color, label, dx in [(boot_fid, "#d94701", "high luminosity", -x_offset / 2),
+                                    (boot_stoc, "#2171b5", "high stochasticity", +x_offset / 2)]:
+        meds = np.array([np.percentile(boot[N], 50) for N in args.n_values])
+        los  = np.array([np.percentile(boot[N], 2.5) for N in args.n_values])
+        his  = np.array([np.percentile(boot[N], 97.5) for N in args.n_values])
+        x = np.array(args.n_values, dtype=float) + dx
+        ax.errorbar(x, meds, yerr=[meds - los, his - meds],
                      fmt="o-", color=color, label=label, capsize=4)
     ax.set_xlabel("N (independent pointings)")
-    ax.set_ylabel(r"mean $d_1$ [cMpc]")
+    ax.set_ylabel(r"mean $d_1$ [arcmin]")
     ax.set_xticks(args.n_values)
-    ax.set_title(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$\n"
+    ax.set_title(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$, "
+                 rf"$\Delta z={dz}$" "\n"
                  rf"$M_{{\rm UV,0}}={args.muv0}$, $M_{{\rm UV,lim}}={args.muvlim}$", fontsize=11)
     ax.legend(fontsize=11, frameon=False)
     fig.tight_layout()
-    fig.savefig(args.output_dir / f"d1_meanboot_z{args.redshift}_M{bright_key}_lim{faint_key}.pdf")
+    fig.savefig(args.output_dir / f"d1_meanboot_arcmin_z{args.redshift}_M{bright_key}_lim{faint_key}.pdf")
     log.info(f"Saved plot + npz to {args.output_dir}")
 
 
