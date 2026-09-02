@@ -184,14 +184,14 @@ def main():
     # ------------------------------------------------------------------
     mean_fid,  std_fid  = counts_fid.mean(),  counts_fid.std()
     mean_stoc, std_stoc = counts_stoc.mean(), counts_stoc.std()
-    p16_fid,  p50_fid,  p84_fid  = np.percentile(counts_fid,  [16, 50, 84])
-    p16_stoc, p50_stoc, p84_stoc = np.percentile(counts_stoc, [16, 50, 84])
+    p16_fid,  p50_fid,  p84_fid  = np.percentile(counts_fid,  [2.5, 50, 97.5])
+    p16_stoc, p50_stoc, p84_stoc = np.percentile(counts_stoc, [2.5, 50, 97.5])
     frac_zero_fid  = float((counts_fid  == 0).mean())
     frac_zero_stoc = float((counts_stoc == 0).mean())
 
     print(f"\nExpected number of faint (M_UV < {args.muvlim}) neighbors within the "
           f"{args.area_arcmin2} arcmin^2 FoV, per bright-galaxy pointing:")
-    print(f"  {'model':<12}  {'mean +/- std':>16}  {'median [16,84]':>20}  {'P(n=0)':>8}")
+    print(f"  {'model':<12}  {'mean +/- std':>16}  {'median [2.5,97.5]':>20}  {'P(n=0)':>8}")
     print(f"  {'-'*62}")
     print(f"  {'fiducial':<12}  {mean_fid:>6.2f} +/- {std_fid:<6.2f}  "
           f"{p50_fid:>6.1f} [{p16_fid:.1f},{p84_fid:.1f}]  {frac_zero_fid:>8.3f}")
@@ -210,8 +210,8 @@ def main():
     for N in args.n_values:
         s_fid  = result["fid_true"][N]
         s_stoc = result["stoc_true"][N]
-        lo_f, med_f, hi_f = np.percentile(s_fid, [16, 50, 84])
-        lo_s, med_s, hi_s = np.percentile(s_stoc, [16, 50, 84])
+        lo_f, med_f, hi_f = np.percentile(s_fid, [2.5, 50, 97.5])
+        lo_s, med_s, hi_s = np.percentile(s_stoc, [2.5, 50, 97.5])
         print(f"{N:>4}  {med_f:>8.2f} [{lo_f:.2f},{hi_f:.2f}]      "
               f"{med_s:>8.2f} [{lo_s:.2f},{hi_s:.2f}]")
         summary[N] = dict(fid_true=(lo_f, med_f, hi_f), stoc_true=(lo_s, med_s, hi_s))
@@ -236,8 +236,8 @@ def main():
     for true_label, color, label in [("fid_true", "#d94701", "high luminosity true"),
                                       ("stoc_true", "#2171b5", "high stochasticity true")]:
         meds = [np.percentile(result[true_label][N], 50) for N in args.n_values]
-        los  = [np.percentile(result[true_label][N], 16) for N in args.n_values]
-        his  = [np.percentile(result[true_label][N], 84) for N in args.n_values]
+        los  = [np.percentile(result[true_label][N], 2.5) for N in args.n_values]
+        his  = [np.percentile(result[true_label][N], 97.5) for N in args.n_values]
         ax.plot(args.n_values, meds, "o-", color=color, label=label)
         ax.fill_between(args.n_values, los, his, color=color, alpha=0.2)
     ax.set_xlabel("N (independent pointings)")
