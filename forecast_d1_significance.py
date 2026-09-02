@@ -209,15 +209,15 @@ def main():
     print(f"\nMean d1 [arcmin] vs N, bootstrapped ({args.n_trials} trials/N), "
           f"z={args.redshift}, M_UV,0={args.muv0}, M_UV,lim={args.muvlim}, area={args.area_arcmin2} arcmin^2, "
           f"Delta_z={dz}")
-    print(f"{'N':>4}  {'fiducial: median [2.5,97.5]':>28}  {'stochastic: median [2.5,97.5]':>28}  "
+    print(f"{'N':>4}  {'fiducial: median [16,84]':>28}  {'stochastic: median [16,84]':>28}  "
           f"{'overlap?':>10}  {'separation [sigma]':>18}")
     print("-" * 96)
     summary = {}
     for N in args.n_values:
         f, s = boot_fid[N], boot_stoc[N]
-        lo_f, med_f, hi_f = np.percentile(f, [2.5, 50, 97.5])
-        lo_s, med_s, hi_s = np.percentile(s, [2.5, 50, 97.5])
-        overlap = not (hi_f < lo_s or hi_s < lo_f)  # 95% bands overlap?
+        lo_f, med_f, hi_f = np.percentile(f, [16, 50, 84])
+        lo_s, med_s, hi_s = np.percentile(s, [16, 50, 84])
+        overlap = not (hi_f < lo_s or hi_s < lo_f)  # 68% bands overlap?
         sep_sigma = abs(med_f - med_s) / np.sqrt(f.std() ** 2 + s.std() ** 2)
         print(f"{N:>4}  {med_f:>8.3f} [{lo_f:.3f},{hi_f:.3f}]      "
               f"{med_s:>8.3f} [{lo_s:.3f},{hi_s:.3f}]      "
@@ -246,8 +246,8 @@ def main():
     for boot, color, label, dx in [(boot_fid, "#d94701", "high luminosity", -x_offset / 2),
                                     (boot_stoc, "#2171b5", "high stochasticity", +x_offset / 2)]:
         meds = np.array([np.percentile(boot[N], 50) for N in args.n_values])
-        los  = np.array([np.percentile(boot[N], 2.5) for N in args.n_values])
-        his  = np.array([np.percentile(boot[N], 97.5) for N in args.n_values])
+        los  = np.array([np.percentile(boot[N], 16) for N in args.n_values])
+        his  = np.array([np.percentile(boot[N], 84) for N in args.n_values])
         x = np.array(args.n_values, dtype=float) + dx
         ax.errorbar(x, meds, yerr=[meds - los, his - meds],
                      fmt="o-", color=color, label=label, capsize=4)
