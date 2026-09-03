@@ -38,8 +38,18 @@ sigma.
 
 Usage
 -----
+    # single depth
     python forecast_d1_significance.py \\
         --redshift 14.0 --area-arcmin2 4.84 --muv0 -20.5 --muvlim -18.0 \\
+        --photo-z-uncertainty 0.5 \\
+        --n-values 1 2 5 --n-realizations 100 --n-trials 2000 \\
+        --output-dir /groups/astro/ivannik/projects/Neighbors/d1_forecast
+
+    # depth sweep -- one panel per value in a single comparison figure,
+    # plus one npz per depth
+    python forecast_d1_significance.py \\
+        --redshift 14.0 --area-arcmin2 4.84 --muv0 -20.5 \\
+        --muvlim -18.0 -18.1 -18.2 -18.3 \\
         --photo-z-uncertainty 0.5 \\
         --n-values 1 2 5 --n-realizations 100 --n-trials 2000 \\
         --output-dir /groups/astro/ivannik/projects/Neighbors/d1_forecast
@@ -129,7 +139,9 @@ def parse_args():
                    help="Sets the angular (xy) aperture half-width -- see the aperture-convention "
                         "note in forecast_count_significance.py (same 4x-area caveat applies).")
     p.add_argument("--muv0", type=float, required=True)
-    p.add_argument("--muvlim", type=float, required=True)
+    p.add_argument("--muvlim", type=float, nargs="+", required=True,
+                   help="One or more faint-neighbor depths to sweep -- each gets its own bootstrap "
+                        "and npz, plus one shared multi-panel comparison figure.")
     p.add_argument("--photo-z-uncertainty", type=float, default=0.5,
                    help="Line-of-sight pencil-beam half-width, as a redshift interval Delta_z. "
                         "Default 0.5 is Paper I Sect. 3.4's own fiducial choice, motivated there by "
@@ -162,11 +174,7 @@ def main():
                     f"clipping to {n_avail}.")
         n_realizations = n_avail
 
-    cfg = AnalysisConfig(
-        bright_limits=[args.muv0], faint_limits=[args.muvlim],
-        preselect_faint_limit=args.muvlim, survey_area_arcmin2=args.area_arcmin2,
-    )
-    half_side_xy = cfg.search_box_mpc(args.redshift)
+    half_side_xy = AnalysisConfig(survey_area_arcmin2=args.area_arcmin2).search_box_mpc(args.redshift)
 
     dz = args.photo_z_uncertainty
     half_side_z_upper = (cosmo.comoving_distance(args.redshift + dz)
@@ -174,93 +182,100 @@ def main():
     half_side_z_lower = (cosmo.comoving_distance(args.redshift)
                           - cosmo.comoving_distance(args.redshift - dz)).to(u.Mpc).value
 
-    bright_key, faint_key = cfg.bright_names[0], cfg.faint_names[0]
-
     log.info(f"z={args.redshift}  area={args.area_arcmin2} arcmin^2  M_UV,0={args.muv0}  "
              f"M_UV,lim={args.muvlim}  n_realizations={n_realizations}")
     log.info(f"Pencil beam: half_side_xy={half_side_xy:.2f} cMpc, "
              f"half_side_z=[{half_side_z_lower:.1f},{half_side_z_upper:.1f}] cMpc "
              f"(Delta_z={dz})")
 
-    log.info("Loading halo catalog (shared across all realizations) ...")
+    log.info("Loading halo catalog (shared across all realizations and depths) ...")
     halo_coords, _ = load_halo_catalog(z_cfg.halo_catalog_path)
 
-    log.info("Computing projected d1 (fiducial) ...")
-    d1_fid = pencil_beam_d1_arcmin(
-        z_cfg.muv_fiducial_path, halo_coords, args.muv0, args.muvlim,
-        half_side_xy, half_side_z_lower, half_side_z_upper,
-        n_realizations, args.redshift, args.min_neighbors,
-    )
-    log.info("Computing projected d1 (stochastic) ...")
-    d1_stoc = pencil_beam_d1_arcmin(
-        z_cfg.muv_stochastic_path, halo_coords, args.muv0, args.muvlim,
-        half_side_xy, half_side_z_lower, half_side_z_upper,
-        n_realizations, args.redshift, args.min_neighbors,
-    )
-    log.info(f"  fiducial:   {len(d1_fid)} usable environments, mean d1={d1_fid.mean():.3f} arcmin, "
-             f"std={d1_fid.std():.3f}")
-    log.info(f"  stochastic: {len(d1_stoc)} usable environments, mean d1={d1_stoc.mean():.3f} arcmin, "
-             f"std={d1_stoc.std():.3f}")
-
-    log.info(f"Bootstrapping mean d1 vs N for N={args.n_values}, {args.n_trials} trials each ...")
-    boot_fid  = bootstrap_mean_vs_n(d1_fid,  args.n_values, args.n_trials, rng)
-    boot_stoc = bootstrap_mean_vs_n(d1_stoc, args.n_values, args.n_trials, rng)
-
-    print(f"\nMean d1 [arcmin] vs N, bootstrapped ({args.n_trials} trials/N), "
-          f"z={args.redshift}, M_UV,0={args.muv0}, M_UV,lim={args.muvlim}, area={args.area_arcmin2} arcmin^2, "
-          f"Delta_z={dz}")
-    print(f"{'N':>4}  {'fiducial: median [16,84]':>28}  {'stochastic: median [16,84]':>28}  "
-          f"{'overlap?':>10}  {'separation [sigma]':>18}")
-    print("-" * 96)
-    summary = {}
-    for N in args.n_values:
-        f, s = boot_fid[N], boot_stoc[N]
-        lo_f, med_f, hi_f = np.percentile(f, [16, 50, 84])
-        lo_s, med_s, hi_s = np.percentile(s, [16, 50, 84])
-        overlap = not (hi_f < lo_s or hi_s < lo_f)  # 68% bands overlap?
-        sep_sigma = abs(med_f - med_s) / np.sqrt(f.std() ** 2 + s.std() ** 2)
-        print(f"{N:>4}  {med_f:>8.3f} [{lo_f:.3f},{hi_f:.3f}]      "
-              f"{med_s:>8.3f} [{lo_s:.3f},{hi_s:.3f}]      "
-              f"{'yes' if overlap else 'no':>10}  {sep_sigma:>18.2f}")
-        summary[N] = dict(fid=(lo_f, med_f, hi_f), stoc=(lo_s, med_s, hi_s),
-                           overlap=overlap, sep_sigma=sep_sigma)
-
-    np.savez(
-        args.output_dir / f"d1_meanboot_arcmin_z{args.redshift}_M{bright_key}_lim{faint_key}.npz",
-        n_values=np.array(args.n_values),
-        **{f"fid_N{N}": boot_fid[N] for N in args.n_values},
-        **{f"stoc_N{N}": boot_stoc[N] for N in args.n_values},
-        d1_fid=d1_fid, d1_stoc=d1_stoc, photo_z_uncertainty=dz,
-    )
-
-    # ------------------------------------------------------------------
-    # Plot -- exactly the "does N=2 overlap, N=5 separate" check, in arcmin.
-    # Stochastic model's points are shifted slightly in x so the two
-    # error bars don't sit directly on top of each other (Charlotte's request).
-    # ------------------------------------------------------------------
     plt.style.use("seaborn-v0_8-ticks")
-    plt.rcParams.update({"font.size": 14, "xtick.top": True, "ytick.right": True,
+    plt.rcParams.update({"font.size": 13, "xtick.top": True, "ytick.right": True,
                          "xtick.direction": "in", "ytick.direction": "in"})
-    fig, ax = plt.subplots(figsize=(6, 5))
+    n_panels = len(args.muvlim)
+    fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 4.5), sharey=True, squeeze=False)
+    axes = axes[0]
     x_offset = 0.08
-    for boot, color, label, dx in [(boot_fid, "#d94701", "high luminosity", -x_offset / 2),
-                                    (boot_stoc, "#2171b5", "high stochasticity", +x_offset / 2)]:
-        meds = np.array([np.percentile(boot[N], 50) for N in args.n_values])
-        los  = np.array([np.percentile(boot[N], 16) for N in args.n_values])
-        his  = np.array([np.percentile(boot[N], 84) for N in args.n_values])
-        x = np.array(args.n_values, dtype=float) + dx
-        ax.errorbar(x, meds, yerr=[meds - los, his - meds],
-                     fmt="o-", color=color, label=label, capsize=4)
-    ax.set_xlabel("N (independent pointings)")
-    ax.set_ylabel(r"mean $d_1$ [arcmin]")
-    ax.set_xticks(args.n_values)
-    ax.set_title(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$, "
-                 rf"$\Delta z={dz}$" "\n"
-                 rf"$M_{{\rm UV,0}}={args.muv0}$, $M_{{\rm UV,lim}}={args.muvlim}$", fontsize=11)
-    ax.legend(fontsize=11, frameon=False)
+
+    for panel_i, muvlim in enumerate(args.muvlim):
+        cfg = AnalysisConfig(bright_limits=[args.muv0], faint_limits=[muvlim],
+                              preselect_faint_limit=muvlim, survey_area_arcmin2=args.area_arcmin2)
+        bright_key, faint_key = cfg.bright_names[0], cfg.faint_names[0]
+
+        log.info(f"--- M_UV,lim={muvlim} ---")
+        log.info("Computing projected d1 (fiducial) ...")
+        d1_fid = pencil_beam_d1_arcmin(
+            z_cfg.muv_fiducial_path, halo_coords, args.muv0, muvlim,
+            half_side_xy, half_side_z_lower, half_side_z_upper,
+            n_realizations, args.redshift, args.min_neighbors,
+        )
+        log.info("Computing projected d1 (stochastic) ...")
+        d1_stoc = pencil_beam_d1_arcmin(
+            z_cfg.muv_stochastic_path, halo_coords, args.muv0, muvlim,
+            half_side_xy, half_side_z_lower, half_side_z_upper,
+            n_realizations, args.redshift, args.min_neighbors,
+        )
+        log.info(f"  fiducial:   {len(d1_fid)} usable environments, mean d1={d1_fid.mean():.3f} arcmin, "
+                 f"std={d1_fid.std():.3f}")
+        log.info(f"  stochastic: {len(d1_stoc)} usable environments, mean d1={d1_stoc.mean():.3f} arcmin, "
+                 f"std={d1_stoc.std():.3f}")
+
+        log.info(f"Bootstrapping mean d1 vs N for N={args.n_values}, {args.n_trials} trials each ...")
+        boot_fid  = bootstrap_mean_vs_n(d1_fid,  args.n_values, args.n_trials, rng)
+        boot_stoc = bootstrap_mean_vs_n(d1_stoc, args.n_values, args.n_trials, rng)
+
+        print(f"\nMean d1 [arcmin] vs N, bootstrapped ({args.n_trials} trials/N), "
+              f"z={args.redshift}, M_UV,0={args.muv0}, M_UV,lim={muvlim}, area={args.area_arcmin2} arcmin^2, "
+              f"Delta_z={dz}")
+        print(f"{'N':>4}  {'fiducial: median [16,84]':>28}  {'stochastic: median [16,84]':>28}  "
+              f"{'overlap?':>10}  {'separation [sigma]':>18}")
+        print("-" * 96)
+        for N in args.n_values:
+            f, s = boot_fid[N], boot_stoc[N]
+            lo_f, med_f, hi_f = np.percentile(f, [16, 50, 84])
+            lo_s, med_s, hi_s = np.percentile(s, [16, 50, 84])
+            overlap = not (hi_f < lo_s or hi_s < lo_f)  # 68% bands overlap?
+            sep_sigma = abs(med_f - med_s) / np.sqrt(f.std() ** 2 + s.std() ** 2)
+            print(f"{N:>4}  {med_f:>8.3f} [{lo_f:.3f},{hi_f:.3f}]      "
+                  f"{med_s:>8.3f} [{lo_s:.3f},{hi_s:.3f}]      "
+                  f"{'yes' if overlap else 'no':>10}  {sep_sigma:>18.2f}")
+
+        np.savez(
+            args.output_dir / f"d1_meanboot_arcmin_z{args.redshift}_M{bright_key}_lim{faint_key}.npz",
+            n_values=np.array(args.n_values),
+            **{f"fid_N{N}": boot_fid[N] for N in args.n_values},
+            **{f"stoc_N{N}": boot_stoc[N] for N in args.n_values},
+            d1_fid=d1_fid, d1_stoc=d1_stoc, photo_z_uncertainty=dz,
+        )
+
+        # --------------------------------------------------------------
+        # This depth's panel -- stochastic model's points shifted slightly
+        # in x so the two error bars don't sit on top of each other.
+        # --------------------------------------------------------------
+        ax = axes[panel_i]
+        for boot, color, label, dx in [(boot_fid, "#d94701", "high luminosity", -x_offset / 2),
+                                        (boot_stoc, "#2171b5", "high stochasticity", +x_offset / 2)]:
+            meds = np.array([np.percentile(boot[N], 50) for N in args.n_values])
+            los  = np.array([np.percentile(boot[N], 16) for N in args.n_values])
+            his  = np.array([np.percentile(boot[N], 84) for N in args.n_values])
+            x = np.array(args.n_values, dtype=float) + dx
+            ax.errorbar(x, meds, yerr=[meds - los, his - meds],
+                         fmt="o-", color=color, label=label, capsize=4)
+        ax.set_xlabel("N (independent pointings)")
+        ax.set_xticks(args.n_values)
+        ax.set_title(rf"$M_{{\rm UV,lim}}={muvlim}$", fontsize=12)
+        if panel_i == 0:
+            ax.set_ylabel(r"mean $d_1$ [arcmin]")
+            ax.legend(fontsize=10, frameon=False)
+
+    fig.suptitle(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$, "
+                 rf"$M_{{\rm UV,0}}={args.muv0}$, $\Delta z={dz}$", fontsize=13)
     fig.tight_layout()
-    fig.savefig(args.output_dir / f"d1_meanboot_arcmin_z{args.redshift}_M{bright_key}_lim{faint_key}.pdf")
-    log.info(f"Saved plot + npz to {args.output_dir}")
+    muvlim_tag = "-".join(f"{m}" for m in args.muvlim)
+    fig.savefig(args.output_dir / f"d1_meanboot_arcmin_z{args.redshift}_muvlimsweep_{muvlim_tag}.pdf")
+    log.info(f"Saved comparison plot + per-depth npz files to {args.output_dir}")
 
 
 if __name__ == "__main__":
