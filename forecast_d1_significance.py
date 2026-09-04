@@ -118,6 +118,21 @@ def pencil_beam_d1_arcmin(
     return d1_values_mpc / kpc_per_arcmin  # cMpc -> arcmin
 
 
+def bright_halo_masses(muv_path: Path, halo_logmhs: np.ndarray, bright_limit: float,
+                        n_realizations: int) -> np.ndarray:
+    """Pooled log10(M_h/Msun) of halos hosting M_UV < bright_limit galaxies,
+    across n_realizations mock luminosity draws on the same fixed halo
+    catalog -- same selection Paper I Sect. 4.1 uses for the real GN-z11
+    halo-mass estimate, just applied here to the model population instead
+    of one specific object. Depends only on bright_limit, not on the faint
+    depth, so this is computed once per model, not per --muvlim panel."""
+    logmhs_pooled = []
+    for idx in range(n_realizations):
+        muvs = load_muv_catalog(muv_path, index=idx)
+        logmhs_pooled.append(halo_logmhs[muvs < bright_limit])
+    return np.concatenate(logmhs_pooled)
+
+
 def bootstrap_mean_vs_n(d1_arr: np.ndarray, n_values: list[int], n_trials: int,
                          rng: np.random.Generator) -> dict[int, np.ndarray]:
     """For each N, return an array of shape (n_trials,) of bootstrap sample means."""
@@ -189,7 +204,19 @@ def main():
              f"(Delta_z={dz})")
 
     log.info("Loading halo catalog (shared across all realizations and depths) ...")
-    halo_coords, _ = load_halo_catalog(z_cfg.halo_catalog_path)
+    halo_coords, halo_logmhs = load_halo_catalog(z_cfg.halo_catalog_path)
+
+    log.info("Computing halo masses of M_UV,0-bright galaxies for both models ...")
+    logmh_fid  = bright_halo_masses(z_cfg.muv_fiducial_path,   halo_logmhs, args.muv0, n_realizations)
+    logmh_stoc = bright_halo_masses(z_cfg.muv_stochastic_path, halo_logmhs, args.muv0, n_realizations)
+    p16_mh_fid,  p50_mh_fid,  p84_mh_fid  = np.percentile(logmh_fid,  [16, 50, 84])
+    p16_mh_stoc, p50_mh_stoc, p84_mh_stoc = np.percentile(logmh_stoc, [16, 50, 84])
+    print(f"\nHalo masses hosting M_UV < {args.muv0} galaxies at z={args.redshift} "
+          f"(same selection as Paper I Sect. 4.1's GN-z11 estimate):")
+    print(f"  fiducial:   log(M_h/Msun) = {p50_mh_fid:.2f} [{p16_mh_fid:.2f},{p84_mh_fid:.2f}] (68% C.I.), "
+          f"n={len(logmh_fid)}")
+    print(f"  stochastic: log(M_h/Msun) = {p50_mh_stoc:.2f} [{p16_mh_stoc:.2f},{p84_mh_stoc:.2f}] (68% C.I.), "
+          f"n={len(logmh_stoc)}")
 
     plt.style.use("seaborn-v0_8-ticks")
     plt.rcParams.update({"font.size": 16, "xtick.top": True, "ytick.right": True,
@@ -271,7 +298,9 @@ def main():
             ax.legend(fontsize=14, frameon=False)
 
     fig.suptitle(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$, "
-                 rf"$M_{{\rm UV,0}}={args.muv0}$, $\Delta z={dz}$", fontsize=16)
+                 rf"$M_{{\rm UV,0}}={args.muv0}$, $\Delta z={dz}$" "\n"
+                 rf"$\log(M_h/M_\odot)$: fid$={p50_mh_fid:.2f}$, stoc$={p50_mh_stoc:.2f}$ (68% C.I.)",
+                 fontsize=13 )
     fig.tight_layout()
     muvlim_tag = "-".join(f"{m}" for m in args.muvlim)
     fig.savefig(args.output_dir / f"d1_meanboot_arcmin_z{args.redshift}_muvlimsweep_{muvlim_tag}.pdf")
