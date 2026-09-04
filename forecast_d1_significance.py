@@ -222,7 +222,10 @@ def main():
     plt.rcParams.update({"font.size": 16, "xtick.top": True, "ytick.right": True,
                          "xtick.direction": "in", "ytick.direction": "in"})
     n_panels = len(args.muvlim)
-    fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 4.5), sharey=True, squeeze=False)
+    if n_panels == 1:
+        fig, axes = plt.subplots(1, n_panels, figsize=(7.0,7.0), sharey=True, squeeze=False)
+    else:
+        fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 4.5), sharey=True, squeeze=False)
     axes = axes[0]
     x_offset = 0.08
 
@@ -292,15 +295,15 @@ def main():
                          fmt="o-", color=color, label=label, capsize=4)
         ax.set_xlabel("Number of bright galaxies")
         ax.set_xticks(args.n_values)
-        ax.set_title(rf"$M_{{\rm UV,lim}}={muvlim}$", fontsize=12)
+        #ax.set_title(rf"$M_{{\rm UV,lim}}={muvlim}$", fontsize=12)
         if panel_i == 0:
-            ax.set_ylabel(r"mean separation to nearest neighbor [arcmin]")
+            ax.set_ylabel(r"mean separation to \nnearest neighbor [arcmin]")
             ax.legend(fontsize=14, frameon=False)
 
-    fig.suptitle(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$, "
-                 rf"$M_{{\rm UV,0}}={args.muv0}$, $\Delta z={dz}$" "\n"
-                 rf"$\log(M_h/M_\odot)$: fid$={p50_mh_fid:.2f}$, stoc$={p50_mh_stoc:.2f}$ (68% C.I.)",
-                 fontsize=13 )
+    # fig.suptitle(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$, "
+    #              rf"$M_{{\rm UV,0}}={args.muv0}$, $\Delta z={dz}$" "\n"
+    #              rf"$\log(M_h/M_\odot)$: fid$={p50_mh_fid:.2f}$, stoc$={p50_mh_stoc:.2f}$ (68% C.I.)",
+    #              fontsize=13 )
     fig.tight_layout()
     muvlim_tag = "-".join(f"{m}" for m in args.muvlim)
     fig.savefig(args.output_dir / f"d1_meanboot_arcmin_z{args.redshift}_muvlimsweep_{muvlim_tag}.pdf")
