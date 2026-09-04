@@ -223,7 +223,7 @@ def main():
                          "xtick.direction": "in", "ytick.direction": "in"})
     n_panels = len(args.muvlim)
     if n_panels == 1:
-        fig, axes = plt.subplots(1, n_panels, figsize=(7.0,7.0), sharey=True, squeeze=False)
+        fig, axes = plt.subplots(1, n_panels, figsize=(7.0,5), sharey=True, squeeze=False)
     else:
         fig, axes = plt.subplots(1, n_panels, figsize=(4.5 * n_panels, 4.5), sharey=True, squeeze=False)
     axes = axes[0]
@@ -297,7 +297,7 @@ def main():
         ax.set_xticks(args.n_values)
         #ax.set_title(rf"$M_{{\rm UV,lim}}={muvlim}$", fontsize=12)
         if panel_i == 0:
-            ax.set_ylabel(r"mean separation to \nnearest neighbor [arcmin]")
+            ax.set_ylabel("mean separation to \nnearest neighbor [arcmin]")
             ax.legend(fontsize=14, frameon=False)
 
     # fig.suptitle(f"z={args.redshift}, area={args.area_arcmin2} arcmin$^2$, "
