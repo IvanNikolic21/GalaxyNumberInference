@@ -29,7 +29,7 @@
 # =============================================================================
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
-conda activate galaxy-neighbors        # UNVERIFIED -- confirm this is where py21cmfast/torch/emcee live
+conda activate UVLF_clust
 
 mkdir -p logs
 

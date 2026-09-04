@@ -71,10 +71,22 @@ def build_mock_obs(theta, halo_coords, logmhs, halo_tree_2d, muv_mh_dict, half_s
 
     Returns (coords_flat, offsets_arr, n_bright_true) or None if theta
     produces zero bright galaxies (can happen at the low-sigma_b edge of
-    the prior).
+    the prior), or if theta is physically out of support -- sigma_uv(M_h) =
+    sigmaUV_a*(log M_h - 12) + sigmaUV_b is linear and unclipped, so a
+    sufficiently positive sigmaUV_a combined with a small sigmaUV_b can go
+    negative at the low-mass end of the halo range (down to the atomic-
+    cooling floor), which sample_muv then feeds to np.random.normal as an
+    invalid (negative) scale. Rather than silently clip sigma_uv and test a
+    different theta than the one actually drawn, we treat this as an
+    out-of-support draw for SBC and skip it cleanly.
     """
     Muv_add, sigmaUV_a, sigmaUV_b = theta
-    muvs = sample_muv(logmhs, muv_mh_dict, Muv_add, sigmaUV_a, sigmaUV_b).astype(np.float32)
+    try:
+        muvs = sample_muv(logmhs, muv_mh_dict, Muv_add, sigmaUV_a, sigmaUV_b).astype(np.float32)
+    except ValueError as e:
+        log.warning(f"  theta={theta} produces an invalid (negative) sigma_uv somewhere in the "
+                    f"halo mass range -- out of support, skipping this truth. ({e})")
+        return None
 
     bright_mask = muvs < BRIGHT_LIMIT
     faint_mask  = (muvs < FAINT_LIMIT) & (muvs >= BRIGHT_LIMIT)
