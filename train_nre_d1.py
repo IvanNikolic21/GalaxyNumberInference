@@ -248,9 +248,10 @@ def parse_args():
     p.add_argument("--database-dir",       type=Path, default=None,
                    help="Primary (posterior) database directory. "
                         "Required unless --prior-only is set.")
-    p.add_argument("--prior-database-dir", type=Path, default=None,
-                   help="Flat prior database directory. "
-                        "Required when --prior-only is set.")
+    p.add_argument("--prior-database-dir", type=Path, nargs='+', default=None,
+                   help="One or more flat prior database directories -- pass several to combine "
+                        "independent-box databases (2026-09-07 multi-box effort, see "
+                        "[[nre-training-imbalance]] memory). Required when --prior-only is set.")
     p.add_argument("--prior-only", action="store_true",
                    help="Train using only the flat prior database "
                         "(ignores --database-dir). "
@@ -304,14 +305,14 @@ def main():
     if args.prior_only:
         if args.prior_database_dir is None:
             raise ValueError("--prior-only requires --prior-database-dir to be set.")
-        db_dirs = [args.prior_database_dir]
+        db_dirs = list(args.prior_database_dir)
         log.info("Prior-only mode: training on flat prior database only.")
     else:
         if args.database_dir is None:
             raise ValueError("--database-dir is required unless --prior-only is set.")
         db_dirs = [args.database_dir]
         if args.prior_database_dir is not None:
-            db_dirs.append(args.prior_database_dir)
+            db_dirs.extend(args.prior_database_dir)
 
     # Param normalization
     log.info("Computing parameter normalization ...")

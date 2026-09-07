@@ -37,7 +37,7 @@
 # =============================================================================
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
-conda activate galaxy-neighbors
+conda activate UVLF_clust
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export OPENBLAS_NUM_THREADS=$SLURM_CPUS_PER_TASK

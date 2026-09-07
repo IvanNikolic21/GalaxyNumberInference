@@ -57,7 +57,14 @@ log = logging.getLogger(__name__)
 _CACHE_BASE = "/lustre/astro/ivannik/21cmFAST_cache/d12b21e80b7885d62d31717c2c2d8421"
 _HASH       = "ffa852ccaa39d8f82951cc98ff798ab4"
 
-HALO_CATALOG_PATH = Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5")
+# Defaults -- the original single-box halo catalog / catalog grid. Override
+# with --halo-catalog-path / --catalog-dir to point at one of the independent
+# coeval boxes instead (2026-09-07 multi-box database effort, see
+# [[nre-training-imbalance]] memory). CATALOG_DIR is reassigned as a module
+# global from main() before Pool creation so forked workers (process_one,
+# below) see the overridden value via copy-on-write, same pattern already
+# used for _halo_coords/_halo_tree_2d.
+DEFAULT_HALO_CATALOG_PATH = Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5")
 CATALOG_DIR       = Path("/lustre/astro/ivannik/catalogs_grid_prior")
 OUTPUT_DIR        = Path("/groups/astro/ivannik/projects/Neighbors/nre_database")
 
@@ -80,9 +87,9 @@ cfg = AnalysisConfig(
 
 z_cfg = RedshiftConfig(
     redshift            = REDSHIFT,
-    halo_catalog_path   = HALO_CATALOG_PATH,
-    muv_fiducial_path   = HALO_CATALOG_PATH,   # placeholder — not used directly
-    muv_stochastic_path = HALO_CATALOG_PATH,
+    halo_catalog_path   = DEFAULT_HALO_CATALOG_PATH,   # placeholder — not used directly,
+    muv_fiducial_path   = DEFAULT_HALO_CATALOG_PATH,   # geometry (search_box_mpc) doesn't
+    muv_stochastic_path = DEFAULT_HALO_CATALOG_PATH,   # depend on which box is in use
 )
 
 # ---------------------------------------------------------------------------
@@ -291,6 +298,13 @@ def parse_args():
     p.add_argument("--seed", type=int, default=42,
                    help="RNG seed for environment subsampling (combined with each "
                         "catalog's index for a distinct, reproducible draw per catalog).")
+    p.add_argument("--halo-catalog-path", type=Path, default=DEFAULT_HALO_CATALOG_PATH,
+                   help="Halo catalog to search for neighbors in -- override to point at one "
+                        "of the independent coeval boxes instead of the original single box.")
+    p.add_argument("--catalog-dir", type=Path, default=CATALOG_DIR,
+                   help="Directory of per-theta MUV catalogs (from generate_catalog_database.py) "
+                        "matching --halo-catalog-path -- must be the catalogs generated against "
+                        "the SAME halo catalog, not mixed across boxes.")
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
@@ -298,9 +312,10 @@ def parse_args():
 # ---------------------------------------------------------------------------
 
 def main():
-    global _halo_coords, _halo_tree_2d
+    global _halo_coords, _halo_tree_2d, CATALOG_DIR
 
     args = parse_args()
+    CATALOG_DIR = args.catalog_dir  # reassigned before Pool creation, see comment above
 
     # Compute photo-z comoving bounds and auto-suffix output dir
     dz_lower = dz_upper = None
@@ -330,8 +345,9 @@ def main():
     # Load halo catalog and build the shared spatial index — both set as globals
     # BEFORE Pool creation so all worker processes inherit them via fork + COW.
     # Workers only read these; pages are never dirtied → one copy in RAM total.
-    log.info(f"Loading halo catalog: {HALO_CATALOG_PATH}")
-    _halo_coords, _ = load_halo_catalog(HALO_CATALOG_PATH)
+    log.info(f"Loading halo catalog: {args.halo_catalog_path}")
+    log.info(f"Catalog dir:          {CATALOG_DIR}")
+    _halo_coords, _ = load_halo_catalog(args.halo_catalog_path)
     log.info(f"  {len(_halo_coords)} halos")
 
     log.info("Building shared 2D cKDTree on halo (x,y) positions ...")

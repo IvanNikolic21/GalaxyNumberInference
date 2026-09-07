@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
-generate_catalogs_grid.py
--------------------------
+generate_catalog_database.py  (formerly generate_catalogs_grid.py)
+--------------------------------------------------------------------
 Generate one MUV catalog per parameter set from a .dat file.
 
 Each row in the .dat file contains:
@@ -10,10 +10,18 @@ Each row in the .dat file contains:
 Output files are named by encoded parameter values, e.g.:
     catalog_Madd-0p40_sa-0p02_sb0p72.h5
 
+--halo-catalog-path lets this be pointed at any of the independent coeval
+boxes (2026-09-07 multi-box database effort -- see [[nre-training-imbalance]]
+memory) instead of only the original single hardcoded box; defaults to the
+original path so existing behavior is unchanged if omitted.
+
 Usage
 -----
-    python generate_catalogs_grid.py --param-file params.dat
-    python generate_catalogs_grid.py --param-file params.dat --n-iter 5
+    python generate_catalog_database.py --param-file params.dat
+    python generate_catalog_database.py --param-file params.dat --n-iter 5
+    python generate_catalog_database.py --param-file prior.dat \\
+        --halo-catalog-path /lustre/astro/ivannik/21cmFAST_cache/<hash>/<seed>/<hash2>/10.5000/HaloCatalog.h5 \\
+        --output-dir /lustre/astro/ivannik/catalogs_grid_prior_seed<seed>
 """
 
 import argparse
@@ -43,7 +51,9 @@ _HASH       = "ffa852ccaa39d8f82951cc98ff798ab4"
 _MUV_MH_DIR = Path("/groups/astro/ivannik/notebooks/clustering_project")
 _OUTPUT_DIR = Path("/lustre/astro/ivannik/catalogs_grid")
 
-HALO_CATALOG_PATH = Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5")
+# Default -- the original single-box halo catalog. Override with
+# --halo-catalog-path to point at one of the independent coeval boxes instead.
+DEFAULT_HALO_CATALOG_PATH = Path(f"{_CACHE_BASE}/1952/{_HASH}/10.5000/HaloCatalog.h5")
 MUV_MH_FILE       = _MUV_MH_DIR / "Muv_Mh_z=10.txt"
 REDSHIFT          = 10.5
 
@@ -141,6 +151,9 @@ def parse_args():
                    help="Directory to save catalogs.")
     p.add_argument("--n-workers", type=int, default=4,
                    help="Number of parallel workers.")
+    p.add_argument("--halo-catalog-path", type=Path, default=DEFAULT_HALO_CATALOG_PATH,
+                   help="Halo catalog to sample M_UV onto -- override to point at one of the "
+                        "independent coeval boxes instead of the original single box.")
     return p.parse_args()
 
 
@@ -184,8 +197,8 @@ def main():
     log.info(f"Output dir:     {args.output_dir}")
 
     # Load halo catalog once
-    log.info(f"Loading halo catalog: {HALO_CATALOG_PATH}")
-    with h5py.File(HALO_CATALOG_PATH, 'r') as f:
+    log.info(f"Loading halo catalog: {args.halo_catalog_path}")
+    with h5py.File(args.halo_catalog_path, 'r') as f:
         halo_masses = np.array(f['HaloCatalog']['OutputFields']['halo_masses'])
     logmhs = np.log10(halo_masses[halo_masses > 0.0])
     log.info(f"  {len(logmhs)} halos with M > 0")
