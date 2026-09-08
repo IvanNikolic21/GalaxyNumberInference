@@ -129,6 +129,21 @@ def make_output_name(Muv_add: float, sigmaUV_a: float, sigmaUV_b: float) -> str:
 _halo_coords: np.ndarray = None
 _halo_tree_2d: cKDTree   = None
 
+_EXPECTED_NPZ_KEYS = {"coords", "offsets", "params", "n_bright_true"}
+
+
+def _is_valid_output_npz(path: Path) -> bool:
+    """True if `path` opens cleanly and has all expected arrays -- catches
+    truncated files left behind by an interrupted run (job killed/timed out
+    mid-write), which `path.exists()` alone can't distinguish from a
+    genuinely completed file. Same failure mode as
+    generate_catalog_database.py's _is_valid_catalog, same fix."""
+    try:
+        with np.load(path) as d:
+            return _EXPECTED_NPZ_KEYS.issubset(d.files)
+    except Exception:
+        return False
+
 
 def process_one(
     args_tuple,
@@ -143,8 +158,11 @@ def process_one(
 
     out_path = output_dir / make_output_name(Muv_add, sigmaUV_a, sigmaUV_b)
     if out_path.exists():
-        log.info(f"  [{i+1}/{n_total}] Already exists, skipping.")
-        return
+        if _is_valid_output_npz(out_path):
+            log.info(f"  [{i+1}/{n_total}] Already exists and valid, skipping.")
+            return
+        log.warning(f"  [{i+1}/{n_total}] Existing file is truncated/corrupted "
+                    f"(interrupted earlier run) -- regenerating.")
 
     cat_path = CATALOG_DIR / make_catalog_name(Muv_add, sigmaUV_a, sigmaUV_b)
     if not cat_path.exists():

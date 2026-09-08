@@ -161,14 +161,29 @@ def parse_args():
 # Worker function for parallel execution
 # ---------------------------------------------------------------------------
 
+def _is_valid_catalog(path: Path, n_iter: int) -> bool:
+    """True if `path` opens cleanly and its 'data' earray has the expected
+    row count -- catches truncated files left behind by an interrupted run
+    (e.g. job killed/timed out mid-write), which `path.exists()` alone
+    can't distinguish from a genuinely completed file."""
+    try:
+        with tables.open_file(str(path), mode='r') as f:
+            return f.root.data.shape[0] == n_iter
+    except Exception:
+        return False
+
+
 def _worker(args_tuple, n_iter, logmhs, muv_mh_dict, output_dir, n_total):
     i, (Muv_add, sigmaUV_a, sigmaUV_b) = args_tuple
     name = make_catalog_name(Muv_add, sigmaUV_a, sigmaUV_b)
     out  = output_dir / name
 
     if out.exists():
-        log.info(f"  [{i+1}/{n_total}] Already exists, skipping: {name}")
-        return
+        if _is_valid_catalog(out, n_iter):
+            log.info(f"  [{i+1}/{n_total}] Already exists and valid, skipping: {name}")
+            return
+        log.warning(f"  [{i+1}/{n_total}] Existing file is truncated/corrupted "
+                    f"(interrupted earlier run) -- regenerating: {name}")
 
     log.info(f"  [{i+1}/{n_total}] Generating: {name}")
     generate_catalog(out, n_iter, logmhs, muv_mh_dict,
