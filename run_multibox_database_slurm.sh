@@ -79,6 +79,12 @@ python generate_catalog_database.py \
     --output-dir "$CATALOG_DIR" \
     --n-workers "$SLURM_CPUS_PER_TASK"
 
+STAGE1_EXIT=$?
+if [ $STAGE1_EXIT -ne 0 ]; then
+    echo "Stage 1 failed (exit $STAGE1_EXIT) -- aborting before Stage 2 runs against incomplete data."
+    exit $STAGE1_EXIT
+fi
+
 echo "--- Stage 2: build_nre_database.py ---"
 python build_nre_database.py \
     --param-file "$PRIOR_DAT" \

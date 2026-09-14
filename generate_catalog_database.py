@@ -121,18 +121,28 @@ def generate_catalog(
     sigmaUV_a: float,
     sigmaUV_b: float,
 ) -> None:
+    """Raises ValueError (propagated from sample_muv) if this theta produces
+    a negative sigma_uv somewhere in the halo mass range -- out-of-support,
+    same failure mode as run_sbc_one_truth.py's build_mock_obs hit. Caller
+    (_worker) catches this, not here, so it can clean up the partial file
+    and skip gracefully instead of crashing the whole Pool.map() over one
+    invalid theta and leaving an unclosed, truncated file behind (the file
+    is created here via mode='w' immediately, before sample_muv is even
+    called once, so an uncaught exception previously left it open forever)."""
     f = tables.open_file(str(output_path), mode='w')
-    test_sample = sample_muv(logmhs, muv_mh_dict, Muv_add, sigmaUV_a, sigmaUV_b)
-    atom    = tables.Float64Atom()
-    array_c = f.create_earray(
-        f.root, 'data', atom,
-        shape=(0,) + test_sample.shape,
-        expectedrows=n_iter,
-    )
-    for _ in range(n_iter):
-        muv_samples = sample_muv(logmhs, muv_mh_dict, Muv_add, sigmaUV_a, sigmaUV_b)
-        array_c.append(muv_samples[np.newaxis, :])
-    f.close()
+    try:
+        test_sample = sample_muv(logmhs, muv_mh_dict, Muv_add, sigmaUV_a, sigmaUV_b)
+        atom    = tables.Float64Atom()
+        array_c = f.create_earray(
+            f.root, 'data', atom,
+            shape=(0,) + test_sample.shape,
+            expectedrows=n_iter,
+        )
+        for _ in range(n_iter):
+            muv_samples = sample_muv(logmhs, muv_mh_dict, Muv_add, sigmaUV_a, sigmaUV_b)
+            array_c.append(muv_samples[np.newaxis, :])
+    finally:
+        f.close()
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -186,8 +196,22 @@ def _worker(args_tuple, n_iter, logmhs, muv_mh_dict, output_dir, n_total):
                     f"(interrupted earlier run) -- regenerating: {name}")
 
     log.info(f"  [{i+1}/{n_total}] Generating: {name}")
-    generate_catalog(out, n_iter, logmhs, muv_mh_dict,
-                     Muv_add, sigmaUV_a, sigmaUV_b)
+    try:
+        generate_catalog(out, n_iter, logmhs, muv_mh_dict,
+                         Muv_add, sigmaUV_a, sigmaUV_b)
+    except ValueError as e:
+        # Out-of-support theta (sigma_uv goes negative somewhere in the halo
+        # mass range) -- same failure mode diagnosed in run_sbc_one_truth.py.
+        # generate_catalog() already closes the file via its own finally
+        # block, but it's still an incomplete (fewer than n_iter rows)
+        # catalog -- remove it so it can't be mistaken for a valid file
+        # later, and skip this theta instead of crashing the whole
+        # pool.map() (which would also abandon every catalog not yet
+        # dispatched, not just this one).
+        log.warning(f"  [{i+1}/{n_total}] theta=({Muv_add},{sigmaUV_a},{sigmaUV_b}) produces an "
+                    f"invalid (negative) sigma_uv somewhere in the halo mass range -- out of "
+                    f"support, skipping. ({e})")
+        out.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
