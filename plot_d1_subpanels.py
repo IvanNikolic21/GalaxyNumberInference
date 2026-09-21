@@ -151,7 +151,7 @@ for i, (fkey, lab) in enumerate(zip(FAINT_KEYS, FAINT_LABS)):
     plot_kde(ax, fid_105[BKEY][fkey],  COLORS_FID_REV[i],  lw=LINEWIDTHS_REV[i], bw=0.3)
     plot_kde(ax, stoc_105[BKEY][fkey], COLORS_STOC_REV[i], lw=LINEWIDTHS_REV[i], bw=0.3)
 
-style_ax(ax, "Varying UV magnitude of \nphotometric neighbors, " + r"$M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
+style_ax(ax, "Varying limiting UV magnitude of \nphotometric neighbors, " + r"$M_{\rm UV,lim}$" + "\n" + r"$M_{\rm UV,0}=-21.5$, $z=10.5$")
 # Labels are already listed darkest-first (matches the REV plotting order above).
 add_param_legend(ax, FAINT_LABS, grays=GRAYS_REV, linewidths=LINEWIDTHS_REV)
 
