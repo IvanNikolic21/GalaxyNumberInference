@@ -63,8 +63,8 @@ REDSHIFT_CONFIGS = {
     14.0: RedshiftConfig(
         redshift=14.0,
         halo_catalog_path=Path(f"{_CACHE_BASE}/1955/{_HASH}/14.0000/HaloCatalog.h5"),
-        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14_400_n.h5"),
-        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14_100_ns_sigmab09.h5"),
+        muv_fiducial_path=Path("/lustre/astro/ivannik/catalog_fiducial_bigger_z14_10_n_Muvadd18_210926.h5"),
+        muv_stochastic_path=Path("/lustre/astro/ivannik/catalog_stoch_bigger_z14_10_ns_lowres_sigmab07_210926.h5"),
     ),
 }
 
@@ -74,7 +74,7 @@ DEFAULT_REALIZATIONS = {
     8.0:  20,
     10.5: 100,    # has named files (new_save / new3) rather than a large stack
     12.0: 100,
-    14.0: 400,
+    14.0: 10,  # quick test on new Muvadd18/sigmab07 z=14 recalibration, only 10 realizations generated so far
 }
 
 AVAILABLE_REDSHIFTS = sorted(REDSHIFT_CONFIGS.keys())
