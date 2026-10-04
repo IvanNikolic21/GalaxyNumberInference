@@ -51,7 +51,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
                      datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
 
-HALO_CATALOG_PATH = bdb.HALO_CATALOG_PATH
+# Seed 1955, one of the four multi-box coeval boxes the current
+# (nre_model_d1_balanced_multibox4) model was actually trained on -- NOT
+# bdb.DEFAULT_HALO_CATALOG_PATH, which is the old pre-multibox single box
+# (seed 1952) and would silently test SBC against data the model never saw
+# in training. See run_multibox_database_slurm.sh for the box cache
+# path convention this mirrors.
+_BOX_CACHE_BASE = "/lustre/astro/ivannik/21cmFAST_cache/a4c5e3a912f09f0efa4f82b5a91a56e0"
+_BOX_HASH2 = "ffa852ccaa39d8f82951cc98ff798ab4"
+HALO_CATALOG_PATH = Path(f"{_BOX_CACHE_BASE}/1955/{_BOX_HASH2}/10.5000/HaloCatalog.h5")
 BRIGHT_LIMIT       = bdb.BRIGHT_LIMIT
 FAINT_LIMIT        = bdb.FAINT_LIMIT
 REDSHIFT           = bdb.REDSHIFT
