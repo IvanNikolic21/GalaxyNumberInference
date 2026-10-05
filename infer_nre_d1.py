@@ -224,6 +224,11 @@ def parse_args():
                         "Loaded from model_config.npz if not set.")
     p.add_argument("--use-uvlf", action="store_true",
                    help="Add UVLF log-likelihood (Mason15 + Donnan24 z=10) to the posterior.")
+    p.add_argument("--uvlf-only", action="store_true",
+                   help="Zero-environment posterior: prior x UVLF-likelihood only. Unlike "
+                        "--n-obs 0 (which does NOT give an empty environment list -- see the "
+                        "summaries-building loop), this forces summaries to stay empty "
+                        "regardless of what's in --obs-file. Mirrors infer_nre.py's --uvlf-only.")
     return p.parse_args()
 
 
@@ -269,7 +274,7 @@ def main():
     # UVLF likelihood setup
     mason15 = None
     uvlf_obs = None
-    if args.use_uvlf:
+    if args.use_uvlf or args.uvlf_only:
         log.info("Setting up UVLF likelihood (Mason15 + Donnan24 z=10) ...")
         mason15 = Mason15(z=10.0)
         obs = Observations(ang=False, uvlf=True)
@@ -278,16 +283,24 @@ def main():
         log.info("UVLF likelihood ready.")
 
     # Build d1 summaries
+    # (uvlf_only forces this to stay empty -- see log_posterior, which sums
+    # over summaries, so an empty list makes the NRE/clustering term
+    # identically zero for every theta, leaving a pure prior x UVLF-likelihood
+    # posterior. Note --n-obs 0 would NOT achieve this on its own: the loop
+    # appends before checking the break condition, so n_obs=0 falls through
+    # and silently uses every environment in the file instead of none.)
     summaries = []
-    for i in range(len(obs_offs) - 1):
-        env = obs_coords[obs_offs[i]:obs_offs[i+1]]
-        if len(env) > 0:
-            summaries.append(env_to_d1_summary(env, only_angular=only_angular))
-        if len(summaries) == args.n_obs:
-            break
+    if not args.uvlf_only:
+        for i in range(len(obs_offs) - 1):
+            env = obs_coords[obs_offs[i]:obs_offs[i+1]]
+            if len(env) > 0:
+                summaries.append(env_to_d1_summary(env, only_angular=only_angular))
+            if len(summaries) == args.n_obs:
+                break
     log.info(f"Using {len(summaries)} environments.")
-    log.info(f"  d1 values: mean={np.mean([s[0] for s in summaries]):.3f}  "
-             f"std={np.std([s[0] for s in summaries]):.3f}")
+    if summaries:
+        log.info(f"  d1 values: mean={np.mean([s[0] for s in summaries]):.3f}  "
+                 f"std={np.std([s[0] for s in summaries]):.3f}")
 
     # Sample posterior
     if args.use_grid:
