@@ -355,7 +355,7 @@ def main():
         fontsize=14, y=1.02,
     )
 
-    uvlf_tag = "_uvlf" if args.use_uvlf else ""
+    uvlf_tag = "_uvlfonly" if args.uvlf_only else ("_uvlf" if args.use_uvlf else "")
     out = args.output_dir / f"corner_d1_N{len(summaries)}{uvlf_tag}.pdf"
     fig.savefig(out, bbox_inches="tight")
     log.info(f"Saved: {out}")
