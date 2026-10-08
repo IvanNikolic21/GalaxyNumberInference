@@ -171,14 +171,28 @@ class HaloMassNetwork(nn.Module):
                     nn.Linear(in_d, out_d), nn.LayerNorm(out_d), nn.GELU(), nn.Dropout(dropout),
                 ))
         self.blocks = nn.ModuleList(blocks)
-        self.output = nn.Linear(hidden_dims[-1], 2)  # (mu, log_sigma)
+        self.output = nn.Linear(hidden_dims[-1], 2)  # (mu, pre-sigmoid log_sigma)
+        with torch.no_grad():
+            # Start log_sigma's raw output at 0 -> sigmoid(0)=0.5 -> log_sigma=0 (sigma=1)
+            # initially, a sane starting uncertainty rather than drifting toward the
+            # edge of the allowed range right out of the gate.
+            self.output.bias[1] = 0.0
 
     def forward(self, x):
         h = self.input_proj(x)
         for block in self.blocks:
             h = block(h)
         out = self.output(h)
-        mu, log_sigma = out[:, 0], out[:, 1].clamp(-5.0, 5.0)
+        mu = out[:, 0]
+        # Smooth (always-differentiable) bound instead of a hard clamp: a hard
+        # clamp has exactly zero gradient once log_sigma is pushed past the
+        # boundary, so if the network ever "cheats" the NLL by inflating sigma
+        # to make the (target-mu)^2/sigma^2 term negligible, it gets stuck
+        # there forever with no gradient left to learn mu or recover. sigmoid
+        # keeps a nonzero gradient everywhere, so that trap can't form. Range
+        # (-3, 3) -> sigma in [0.05, 20] dex, already generous for log(Mh)
+        # spanning ~8-12; no reason to allow sigma=e^5~148 like before.
+        log_sigma = -3.0 + 6.0 * torch.sigmoid(out[:, 1])
         return mu, log_sigma
 
 
