@@ -128,8 +128,9 @@ def make_output_name(Muv_add: float, sigmaUV_a: float, sigmaUV_b: float) -> str:
 # zero per-worker duplication regardless of how many workers are used.
 _halo_coords: np.ndarray = None
 _halo_tree_2d: cKDTree   = None
+_halo_logmhs: np.ndarray = None
 
-_EXPECTED_NPZ_KEYS = {"coords", "offsets", "params", "n_bright_true"}
+_EXPECTED_NPZ_KEYS = {"coords", "offsets", "params", "n_bright_true", "bright_logmh"}
 
 
 def _is_valid_output_npz(path: Path) -> bool:
@@ -180,6 +181,7 @@ def process_one(
     faint_mask  = (muvs < FAINT_LIMIT) & (muvs >= BRIGHT_LIMIT)
 
     bright_coords_sel = _halo_coords[bright_mask]
+    bright_logmhs_sel = _halo_logmhs[bright_mask]
     n_bright_true = len(bright_coords_sel)
 
     # Always randomize the order of bright galaxies, independent of capping --
@@ -193,7 +195,9 @@ def process_one(
     # re-introducing the same order-dependence bug for exactly those points.
     rng = np.random.default_rng(seed + i)
     if n_bright_true > 0:
-        bright_coords_sel = bright_coords_sel[rng.permutation(n_bright_true)]
+        perm = rng.permutation(n_bright_true)
+        bright_coords_sel = bright_coords_sel[perm]
+        bright_logmhs_sel = bright_logmhs_sel[perm]
 
     # Subsample to a fixed cap so every parameter point contributes a comparable
     # number of training environments regardless of how many bright galaxies it
@@ -208,6 +212,7 @@ def process_one(
     # cannot manufacture examples that don't exist.
     if max_env_per_catalog is not None and n_bright_true > max_env_per_catalog:
         bright_coords_sel = bright_coords_sel[:max_env_per_catalog]
+        bright_logmhs_sel = bright_logmhs_sel[:max_env_per_catalog]
 
     half_side = cfg.search_box_mpc(REDSHIFT)
 
@@ -274,12 +279,19 @@ def process_one(
     offsets_arr = np.array(offsets, dtype=np.int32)
     params_arr  = np.array([Muv_add, sigmaUV_a, sigmaUV_b], dtype=np.float64)
 
+    # bright_logmhs_sel is index-aligned with bright_coords_sel (same shuffle/cap
+    # applied to both, and the neighbor-search loop below never filters
+    # bright_coords_sel further -- it only ever appends to offsets, even for
+    # an empty environment), so one log(Mh) entry per offsets boundary.
+    bright_logmh_arr = bright_logmhs_sel.astype(np.float32)
+
     np.savez_compressed(
         out_path,
         coords        = coords_flat,
         offsets       = offsets_arr,
         params        = params_arr,
         n_bright_true = n_bright_true,   # count before subsampling, for diagnostics
+        bright_logmh  = bright_logmh_arr,  # log10(Mh/Msun) of each bright galaxy, same order as offsets
     )
     log.info(f"  [{i+1}/{n_total}] Saved: {out_path.name}  "
              f"({len(bright_coords_sel)}/{n_bright_true} bright used, "
@@ -330,7 +342,7 @@ def parse_args():
 # ---------------------------------------------------------------------------
 
 def main():
-    global _halo_coords, _halo_tree_2d, CATALOG_DIR
+    global _halo_coords, _halo_tree_2d, _halo_logmhs, CATALOG_DIR
 
     args = parse_args()
     CATALOG_DIR = args.catalog_dir  # reassigned before Pool creation, see comment above
@@ -365,7 +377,7 @@ def main():
     # Workers only read these; pages are never dirtied → one copy in RAM total.
     log.info(f"Loading halo catalog: {args.halo_catalog_path}")
     log.info(f"Catalog dir:          {CATALOG_DIR}")
-    _halo_coords, _ = load_halo_catalog(args.halo_catalog_path)
+    _halo_coords, _halo_logmhs = load_halo_catalog(args.halo_catalog_path)
     log.info(f"  {len(_halo_coords)} halos")
 
     log.info("Building shared 2D cKDTree on halo (x,y) positions ...")
