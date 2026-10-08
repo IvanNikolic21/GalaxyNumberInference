@@ -28,7 +28,14 @@ Usage
                         /groups/astro/ivannik/projects/Neighbors/nre_database_prior_capped_seed3142 \\
                         /groups/astro/ivannik/projects/Neighbors/nre_database_prior_capped_seed4242 \\
         --only-angular --epochs 100 --max-per-catalog 0 --weight-by-catalog-count \\
+        --reweight-by-mass --diag-every 10 \\
         --output-dir /groups/astro/ivannik/projects/Neighbors/halo_mass_model_multibox4
+
+--reweight-by-mass inverse-density-weights the loss by true log(Mh) bin, to
+counter the shrinkage-to-the-mean seen in both tails of eval_vs_truth.pdf.
+--diag-every logs per-mass-bin val RMS/bias/68%-coverage periodically, so tail
+convergence can be checked directly instead of inferring it from the (middle-
+band-dominated) mean val loss alone.
 """
 import argparse
 import logging
@@ -66,6 +73,9 @@ class HaloMassDataset(Dataset):
         summary_mode: bool = False,
         only_angular: bool = False,
         weight_by_catalog_count: bool = False,
+        reweight_by_mass: bool = False,
+        reweight_alpha: float = 0.5,
+        reweight_bins: int = 30,
     ):
         self.param_min    = param_min
         self.param_max    = param_max
@@ -122,6 +132,26 @@ class HaloMassDataset(Dataset):
                 cat_idx += 1
 
         log.info(f"Total (environment, log Mh) pairs: {len(self.envs)}")
+
+        if reweight_by_mass and len(self.logmh) > 0:
+            # Inverse-density reweighting: the predicted-vs-true plot showed
+            # shrinkage-to-the-mean worst in the sparsest true-logMh regions
+            # (both tails), because the dense middle band dominates the loss.
+            # Bin true logMh and give each example a weight ~ 1/count(bin)^alpha,
+            # softened by alpha<1 so empty-ish edge bins don't blow up to
+            # enormous weights from one or two examples. Combined
+            # (multiplicatively) with the existing per-catalog weight, then
+            # renormalized to mean 1 so the overall loss scale is unchanged.
+            logmh_arr = np.array(self.logmh)
+            edges = np.linspace(logmh_arr.min(), logmh_arr.max() + 1e-6, reweight_bins + 1)
+            bin_idx = np.clip(np.digitize(logmh_arr, edges) - 1, 0, reweight_bins - 1)
+            counts = np.bincount(bin_idx, minlength=reweight_bins)
+            mass_weight = 1.0 / np.maximum(counts[bin_idx], 1) ** reweight_alpha
+            mass_weight = mass_weight / mass_weight.mean()
+            self.weights = (np.array(self.weights) * mass_weight).tolist()
+            log.info(f"Applied inverse-density mass reweighting "
+                      f"(bins={reweight_bins}, alpha={reweight_alpha}); "
+                      f"bin counts range [{counts.min()}, {counts.max()}]")
 
     def __len__(self):
         return len(self.envs)
@@ -231,6 +261,36 @@ def val_epoch(model, loader, device):
     return total / len(loader)
 
 
+def log_per_bin_metrics(model, loader, device, n_bins=6):
+    # Diagnostic for whether the tails (sparsest true-logMh regions, where the
+    # eval plot showed shrinkage-to-the-mean) are actually improving, rather
+    # than being masked by the dense middle band dominating the mean val loss.
+    model.eval()
+    targets, mus, sigmas = [], [], []
+    with torch.no_grad():
+        for x, target, weight in loader:
+            x = x.to(device)
+            mu, log_sigma = model(x)
+            targets.append(target.numpy())
+            mus.append(mu.cpu().numpy())
+            sigmas.append(torch.exp(log_sigma).cpu().numpy())
+    targets = np.concatenate(targets)
+    mus     = np.concatenate(mus)
+    sigmas  = np.concatenate(sigmas)
+
+    edges = np.linspace(targets.min(), targets.max() + 1e-6, n_bins + 1)
+    bin_idx = np.clip(np.digitize(targets, edges) - 1, 0, n_bins - 1)
+    for b in range(n_bins):
+        mask = bin_idx == b
+        if mask.sum() == 0:
+            continue
+        rms = np.sqrt(np.mean((targets[mask] - mus[mask]) ** 2))
+        bias = np.mean(mus[mask] - targets[mask])
+        cov68 = np.mean(np.abs(targets[mask] - mus[mask]) < sigmas[mask])
+        log.info(f"    bin [{edges[b]:.2f},{edges[b+1]:.2f})  n={mask.sum():5d}  "
+                  f"rms={rms:.3f}  bias={bias:+.3f}  cov68={cov68:.1%}")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -250,6 +310,15 @@ def parse_args():
     p.add_argument("--weight-by-catalog-count", action="store_true")
     p.add_argument("--only-angular", action="store_true")
     p.add_argument("--summary-mode", action="store_true")
+    p.add_argument("--reweight-by-mass", action="store_true",
+                   help="Inverse-density reweight the loss by true log(Mh) bin, to counter "
+                        "shrinkage-to-the-mean in the sparse tails seen in eval_vs_truth.pdf.")
+    p.add_argument("--reweight-alpha", type=float, default=0.5,
+                   help="Exponent on 1/count(bin); 1.0 = fully flatten, 0.0 = no reweighting.")
+    p.add_argument("--reweight-bins", type=int, default=30)
+    p.add_argument("--diag-every", type=int, default=10,
+                   help="Log per-mass-bin val RMS/bias/coverage every N epochs (0 to disable).")
+    p.add_argument("--diag-bins", type=int, default=6)
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
 
@@ -287,6 +356,9 @@ def main():
         max_per_catalog=args.max_per_catalog,
         summary_mode=args.summary_mode, only_angular=args.only_angular,
         weight_by_catalog_count=args.weight_by_catalog_count,
+        reweight_by_mass=args.reweight_by_mass,
+        reweight_alpha=args.reweight_alpha,
+        reweight_bins=args.reweight_bins,
     )
 
     n_val = int(len(dataset) * args.val_frac)
@@ -320,6 +392,8 @@ def main():
             best_val = val_loss
             torch.save(model.state_dict(), args.output_dir / "halo_mass_best.pt")
             log.info(f"  -> New best model saved (val={val_loss:.4f})")
+        if args.diag_every > 0 and epoch % args.diag_every == 0:
+            log_per_bin_metrics(model, val_loader, device, n_bins=args.diag_bins)
 
     torch.save(model.state_dict(), args.output_dir / "halo_mass_final.pt")
     np.savez(args.output_dir / "model_config.npz",
