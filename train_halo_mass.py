@@ -76,6 +76,7 @@ class HaloMassDataset(Dataset):
         reweight_by_mass: bool = False,
         reweight_alpha: float = 0.5,
         reweight_bins: int = 30,
+        max_weight_ratio: float = 10.0,
     ):
         self.param_min    = param_min
         self.param_max    = param_max
@@ -152,6 +153,30 @@ class HaloMassDataset(Dataset):
             log.info(f"Applied inverse-density mass reweighting "
                       f"(bins={reweight_bins}, alpha={reweight_alpha}); "
                       f"bin counts range [{counts.min()}, {counts.max()}]")
+
+        if max_weight_ratio is not None and max_weight_ratio > 0 and len(self.weights) > 0:
+            # The v2 overnight run showed train/val loss freeze bit-for-bit by
+            # epoch ~10 with log_sigma pegged at its ceiling for ~every
+            # example (mean predicted sigma = 20.09 dex, 100% "coverage") --
+            # the same cheat-by-inflating-sigma failure as the earlier hard-
+            # clamp bug, just re-triggered against the smooth bound. Root
+            # cause: --reweight-by-mass combined (multiplicatively) with
+            # --weight-by-catalog-count gave individual examples weight
+            # ratios of ~100x+ (mass bin counts alone ranged [0, 20404]), so
+            # a handful of extreme-weight examples dominated every batch's
+            # NLL gradient, and the cheapest way to shrink their loss
+            # contribution is to blow up sigma for everyone. Clipping the
+            # final combined weight to a bounded ratio around the median
+            # caps how much any single example can dominate a batch, without
+            # removing the reweighting itself.
+            w = np.array(self.weights)
+            median_w = np.median(w)
+            lo, hi = median_w / max_weight_ratio, median_w * max_weight_ratio
+            n_clipped = int(np.sum((w < lo) | (w > hi)))
+            w = np.clip(w, lo, hi)
+            self.weights = w.tolist()
+            log.info(f"Clipped combined example weights to [{lo:.4g}, {hi:.4g}] "
+                      f"(ratio={max_weight_ratio}x median); {n_clipped}/{len(w)} examples clipped")
 
     def __len__(self):
         return len(self.envs)
@@ -236,7 +261,7 @@ def gaussian_nll(mu, log_sigma, target, weight):
 # Train / val epoch
 # ---------------------------------------------------------------------------
 
-def train_epoch(model, loader, optimizer, device):
+def train_epoch(model, loader, optimizer, device, grad_clip=5.0):
     model.train()
     total = 0.0
     for x, target, weight in loader:
@@ -245,6 +270,8 @@ def train_epoch(model, loader, optimizer, device):
         mu, log_sigma = model(x)
         loss = gaussian_nll(mu, log_sigma, target, weight)
         loss.backward()
+        if grad_clip is not None and grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         optimizer.step()
         total += loss.item()
     return total / len(loader)
@@ -316,6 +343,14 @@ def parse_args():
     p.add_argument("--reweight-alpha", type=float, default=0.5,
                    help="Exponent on 1/count(bin); 1.0 = fully flatten, 0.0 = no reweighting.")
     p.add_argument("--reweight-bins", type=int, default=30)
+    p.add_argument("--max-weight-ratio", type=float, default=10.0,
+                   help="Clip the combined (mass x catalog-count) per-example weight to "
+                        "[median/ratio, median*ratio], to stop a few extreme-weight examples "
+                        "from dominating a batch's gradient and collapsing sigma to its "
+                        "ceiling. 0 or negative disables clipping.")
+    p.add_argument("--grad-clip", type=float, default=5.0,
+                   help="Max gradient norm (0 disables). Cheap insurance against the same "
+                        "instability clipped example weights target.")
     p.add_argument("--diag-every", type=int, default=10,
                    help="Log per-mass-bin val RMS/bias/coverage every N epochs (0 to disable).")
     p.add_argument("--diag-bins", type=int, default=6)
@@ -359,6 +394,7 @@ def main():
         reweight_by_mass=args.reweight_by_mass,
         reweight_alpha=args.reweight_alpha,
         reweight_bins=args.reweight_bins,
+        max_weight_ratio=args.max_weight_ratio,
     )
 
     n_val = int(len(dataset) * args.val_frac)
@@ -384,7 +420,7 @@ def main():
 
     best_val = float('inf')
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, device)
+        train_loss = train_epoch(model, train_loader, optimizer, device, grad_clip=args.grad_clip)
         val_loss   = val_epoch(model, val_loader, device)
         scheduler.step()
         log.info(f"Epoch {epoch:3d}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}")
