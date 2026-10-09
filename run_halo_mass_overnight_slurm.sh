@@ -18,22 +18,32 @@
 ##SBATCH --account=your_account
 
 # =============================================================================
-# Overnight halo-mass model retrain, folding in all three improvements
-# discussed after reviewing eval_vs_truth.pdf's S-shaped shrinkage-to-the-mean:
+# Overnight halo-mass model retrain -- v3.
 #
+# v2 (halo_mass_model_multibox4_v2, already run) added:
 #   1. --reweight-by-mass: inverse-density loss reweighting by true log(Mh)
 #      bin, to stop the dense middle band from dominating gradient updates
 #      and starving the sparse low-/high-mass tails.
 #   2. --diag-every 10: per-mass-bin val RMS/bias/68%-coverage logged
-#      periodically, so tail convergence can be checked directly in the log
-#      instead of inferring it from the (middle-band-dominated) mean val loss.
+#      periodically.
 #   3. Bigger network (6x512 vs the original 4x256) and more epochs (300 vs
-#      100), since GPU is available and the prior run showed no sign of the
-#      shrinkage being a capacity ceiling vs. just an undertrained-tail issue
-#      -- this is a cheap thing to try alongside (1)/(2), not the primary fix.
+#      100).
+# ...but v2's own log showed train/val loss freeze bit-for-bit by epoch ~10,
+# with log_sigma pegged at its ceiling for ~every example (mean predicted
+# sigma = 20.09 dex, 100% "coverage" in eval_vs_truth_v2.pdf). Root cause:
+# --reweight-by-mass x --weight-by-catalog-count gave some examples >100x
+# the weight of others, a few of which dominated every batch's gradient and
+# made inflating sigma the network's cheapest way to shrink their loss
+# contribution. v3 adds the fix (see train_halo_mass.py's HaloMassDataset
+# weight-clipping block and train_epoch's grad_clip):
+#   4. --max-weight-ratio 10: clips the combined per-example weight to
+#      [median/10, median*10] before training ever sees it.
+#   5. --grad-clip 5.0 (train_halo_mass.py's new default, passed explicitly
+#      here too for clarity): caps the gradient norm every step, as a second
+#      line of defense against the same instability.
 #
 # Re-evaluates against eval_vs_truth.pdf's own script at the end so the
-# before/after comparison is a straight diff of the two PDFs.
+# before/after comparison is a straight diff of the three PDFs (v1, v2, v3).
 # =============================================================================
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
@@ -59,13 +69,14 @@ DB1=$NEIGHBORS/nre_database_prior_capped_seed1955
 DB2=$NEIGHBORS/nre_database_prior_capped_seed2027
 DB3=$NEIGHBORS/nre_database_prior_capped_seed3142
 DB4=$NEIGHBORS/nre_database_prior_capped_seed4242
-OUT=$NEIGHBORS/halo_mass_model_multibox4_v2
+OUT=$NEIGHBORS/halo_mass_model_multibox4_v3
 
-echo ">>> Training halo-mass model v2 (reweighted + bigger net + longer run)"
+echo ">>> Training halo-mass model v3 (reweighted + clipped + bigger net + longer run)"
 python train_halo_mass.py \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --only-angular --epochs 300 --max-per-catalog 0 --weight-by-catalog-count \
     --reweight-by-mass --reweight-alpha 0.5 --reweight-bins 30 \
+    --max-weight-ratio 10.0 --grad-clip 5.0 \
     --diag-every 10 --diag-bins 8 \
     --hidden-dims 512 512 512 512 512 512 \
     --batch-size 1024 \
@@ -77,7 +88,7 @@ python evaluate_halo_mass_model.py \
     --model-dir $OUT \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --n-examples 500 \
-    --output $OUT/eval_vs_truth_v2.pdf
+    --output $OUT/eval_vs_truth_v3.pdf
 
 echo "======================================================"
 echo "Finished: $(date)"
