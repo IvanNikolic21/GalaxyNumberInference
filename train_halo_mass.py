@@ -50,6 +50,20 @@ Model and training choices, in one place for reference
   gradient estimate is the same idea behind "truncated importance sampling";
   see e.g. Ionides (2008), "Truncated Importance Sampling," J. Computational
   and Graphical Statistics 17(2), https://doi.org/10.1198/106186008X320456.
+- Label Distribution Smoothing (the --reweight-by-mass mechanism itself, as
+  of the v4 update below): Yang, Zha, Chen, Wang & Katabi (2021), "Delving
+  into Deep Imbalanced Regression," https://arxiv.org/abs/2102.09554 (ICML).
+  Their diagnosis: for a CONTINUOUS target, raw inverse-bin-count weights
+  are statistically unstable, because a sparsely-populated bin's raw count
+  is a noisy estimate of its true density -- nearby bins' true densities are
+  correlated (similar log-Mh values should be similarly rare/common), but
+  raw per-bin counts don't know that, so one bin can get a wildly different
+  weight from its neighbor purely from sampling noise. This is the mechanism
+  that produced the >100x weight ratios --max-weight-ratio had to clip away
+  in the v2/v3 runs. LDS's fix: convolve the bin-count histogram with a
+  symmetric kernel BEFORE computing inverse weights, so a bin's effective
+  weight reflects the smoothed density in its neighborhood rather than its
+  own noisy count -- see _smooth_bin_counts() and its use below.
 
 Usage
 -----
@@ -62,15 +76,21 @@ Usage
         --reweight-by-mass --diag-every 10 \\
         --output-dir /groups/astro/ivannik/projects/Neighbors/halo_mass_model_multibox4
 
---reweight-by-mass inverse-density-weights the loss by true log(Mh) bin, to
-counter the shrinkage-to-the-mean seen in both tails of eval_vs_truth.pdf.
+--reweight-by-mass inverse-density-weights the loss by true log(Mh) bin (via
+Label Distribution Smoothing, --lds-kernel-sigma controlling how much the
+per-bin density estimate is smoothed before inverting it -- see Yang et al.
+2021 in the docstring above), to counter the shrinkage-to-the-mean seen in
+both tails of eval_vs_truth.pdf.
 --diag-every logs per-mass-bin val RMS/bias/68%-coverage periodically, so tail
 convergence can be checked directly instead of inferring it from the (middle-
 band-dominated) mean val loss alone.
 --max-weight-ratio and --grad-clip guard against the failure mode discovered
-when --reweight-by-mass was first combined with --weight-by-catalog-count:
-see the long comment above the weight-clipping block in HaloMassDataset,
-below, for the full story.
+when --reweight-by-mass (then using RAW, unsmoothed inverse-bin-count
+weights) was first combined with --weight-by-catalog-count: see the long
+comment above the weight-clipping block in HaloMassDataset, below, for the
+full story. LDS should make that clipping less necessary, but it's left on
+by default -- check the "N/len clipped" log line to see how much it's
+actually binding under LDS.
 """
 # argparse: standard library command-line argument parser, used in parse_args().
 import argparse
@@ -139,6 +159,43 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
 log = logging.getLogger(__name__)
 
 
+def _smooth_bin_counts(counts: np.ndarray, kernel_sigma: float) -> np.ndarray:
+    """Label Distribution Smoothing's kernel step (Yang et al. 2021, see the
+    module docstring above): convolve a histogram of per-bin example counts
+    with a symmetric Gaussian kernel, so a bin's SMOOTHED count reflects the
+    density in its neighborhood rather than its own (possibly noisy, for a
+    sparsely-populated bin) raw count.
+
+    kernel_sigma is in units of BINS (not dex) -- e.g. kernel_sigma=2 with
+    --reweight-bins 30 spanning the dataset's full log(Mh) range means the
+    kernel's standard deviation is about 1/15th of that range. kernel_sigma=0
+    disables smoothing (returns counts unchanged), which is just the old raw
+    inverse-bin-count behavior -- useful for an apples-to-apples comparison.
+    """
+    if kernel_sigma is None or kernel_sigma <= 0:
+        return counts.astype(np.float64)
+    # Kernel half-width of 3*sigma captures >99% of a Gaussian's mass;
+    # np.arange(-radius, radius+1) gives an odd-length, zero-centered kernel.
+    radius = max(1, int(round(3 * kernel_sigma)))
+    x = np.arange(-radius, radius + 1)
+    kernel = np.exp(-0.5 * (x / kernel_sigma) ** 2)
+    kernel = kernel / kernel.sum()
+    # Explicit zero-pad + mode="valid" (NOT "same"): "same" returns an array
+    # of length max(len(counts), len(kernel)), so if the kernel ever ends up
+    # LONGER than counts (a large --lds-kernel-sigma with a small
+    # --reweight-bins), "same" would silently return a longer, misaligned
+    # array instead of erroring -- bin_idx below would then index into the
+    # wrong positions with no crash to flag it. Zero-padding by `radius` on
+    # each side first and using "valid" always returns exactly len(counts)
+    # elements, correctly centered, regardless of the kernel/bin-count size
+    # ratio. The zero-padding means the two end bins get less smoothing
+    # support than interior bins (no real data out there to smooth them
+    # with) -- a standard, accepted edge behavior for this kind of kernel
+    # smoothing, not specific to LDS.
+    padded = np.pad(counts.astype(np.float64), radius, mode="constant")
+    return np.convolve(padded, kernel, mode="valid")
+
+
 # ---------------------------------------------------------------------------
 # Dataset -- no real/fake pairing, just (environment, theta) -> true log(Mh)
 # ---------------------------------------------------------------------------
@@ -157,6 +214,7 @@ class HaloMassDataset(Dataset):
         reweight_by_mass: bool = False,
         reweight_alpha: float = 0.5,
         reweight_bins: int = 30,
+        lds_kernel_sigma: float = 2.0,
         max_weight_ratio: float = 10.0,
     ):
         # Theta normalization bounds (computed once, in main(), across ALL
@@ -283,14 +341,21 @@ class HaloMassDataset(Dataset):
         log.info(f"Total (environment, log Mh) pairs: {len(self.envs)}")
 
         if reweight_by_mass and len(self.logmh) > 0:
-            # Inverse-density reweighting: the predicted-vs-true plot showed
-            # shrinkage-to-the-mean worst in the sparsest true-logMh regions
-            # (both tails), because the dense middle band dominates the loss.
-            # Bin true logMh and give each example a weight ~ 1/count(bin)^alpha,
-            # softened by alpha<1 so empty-ish edge bins don't blow up to
-            # enormous weights from one or two examples. Combined
-            # (multiplicatively) with the existing per-catalog weight, then
-            # renormalized to mean 1 so the overall loss scale is unchanged.
+            # Label-Distribution-Smoothing (LDS) inverse-density reweighting
+            # -- see Yang et al. (2021) in the module docstring above. The
+            # predicted-vs-true plot showed shrinkage-to-the-mean worst in
+            # the sparsest true-logMh regions (both tails), because the
+            # dense middle band dominates the loss; the fix is to give each
+            # example a weight ~ 1/density(bin)^alpha. v3 computed
+            # "density" as the bin's OWN raw count, which is a noisy
+            # estimate for a sparsely-populated bin and produced individual
+            # weight ratios >100x, destabilizing training (the sigma-
+            # collapse bug --max-weight-ratio/--grad-clip were added to
+            # patch over). v4 instead smooths the count histogram across
+            # neighboring bins first (_smooth_bin_counts), which is the
+            # actual LDS mechanism from the paper -- a less noisy, more
+            # stable density estimate, so the resulting weights shouldn't
+            # need nearly as aggressive clipping downstream.
             logmh_arr = np.array(self.logmh)
             # reweight_bins equal-width bins spanning the full observed
             # log(Mh) range; +1e-6 on the upper edge so the single highest-
@@ -303,28 +368,35 @@ class HaloMassDataset(Dataset):
             # is a defensive guard against any example landing in bin -1 or
             # reweight_bins due to floating-point edge effects.
             bin_idx = np.clip(np.digitize(logmh_arr, edges) - 1, 0, reweight_bins - 1)
-            # Number of examples landing in each of the reweight_bins bins.
+            # Raw per-bin example counts, THEN kernel-smoothed across
+            # neighboring bins -- the LDS step. With lds_kernel_sigma=0 this
+            # is a no-op (smoothed_counts == raw counts), i.e. the old v3
+            # behavior, for direct comparison.
             counts = np.bincount(bin_idx, minlength=reweight_bins)
-            # Per-example weight ~ 1 / (that example's bin count)^alpha.
+            smoothed_counts = _smooth_bin_counts(counts, lds_kernel_sigma)
+            # Per-example weight ~ 1 / (that example's SMOOTHED bin density)^alpha.
             # alpha=1 would fully flatten the mass distribution's
             # contribution to the loss (every bin contributes equally);
             # alpha=0 disables this term entirely (weight=1 for everyone);
             # the default 0.5 is a softened compromise between the two.
-            # counts[bin_idx] maps each example back to ITS bin's count via
-            # fancy indexing; np.maximum(..., 1) guards the (impossible
-            # here, since every example's own bin necessarily has count>=1)
-            # division-by-zero case.
-            mass_weight = 1.0 / np.maximum(counts[bin_idx], 1) ** reweight_alpha
+            # smoothed_counts[bin_idx] maps each example back to ITS bin's
+            # smoothed density via fancy indexing; np.maximum(..., eps)
+            # guards against a near-zero smoothed value at the extreme
+            # edges of the range (possible, unlike with raw counts, since
+            # smoothing can push a low-count edge bin's value arbitrarily
+            # close to zero rather than floor at the bin's own count of >=1).
+            mass_weight = 1.0 / np.maximum(smoothed_counts[bin_idx], 1e-6) ** reweight_alpha
             # Renormalize so the mean weight is exactly 1 -- keeps the
             # overall magnitude of gaussian_nll's weighted average (see
             # gaussian_nll() below) from drifting as reweight_alpha/
-            # reweight_bins change, which would otherwise also silently
-            # change the effective learning rate.
+            # reweight_bins/lds_kernel_sigma change, which would otherwise
+            # also silently change the effective learning rate.
             mass_weight = mass_weight / mass_weight.mean()
             self.weights = (np.array(self.weights) * mass_weight).tolist()
-            log.info(f"Applied inverse-density mass reweighting "
-                      f"(bins={reweight_bins}, alpha={reweight_alpha}); "
-                      f"bin counts range [{counts.min()}, {counts.max()}]")
+            log.info(f"Applied LDS mass reweighting (bins={reweight_bins}, "
+                      f"alpha={reweight_alpha}, kernel_sigma={lds_kernel_sigma} bins); "
+                      f"raw counts range [{counts.min()}, {counts.max()}], "
+                      f"smoothed range [{smoothed_counts.min():.1f}, {smoothed_counts.max():.1f}]")
 
         if max_weight_ratio is not None and max_weight_ratio > 0 and len(self.weights) > 0:
             # The v2 overnight run showed train/val loss freeze bit-for-bit by
@@ -651,11 +723,17 @@ def parse_args():
     p.add_argument("--only-angular", action="store_true")
     p.add_argument("--summary-mode", action="store_true")
     p.add_argument("--reweight-by-mass", action="store_true",
-                   help="Inverse-density reweight the loss by true log(Mh) bin, to counter "
-                        "shrinkage-to-the-mean in the sparse tails seen in eval_vs_truth.pdf.")
+                   help="Label-Distribution-Smoothing (LDS) inverse-density reweight the loss "
+                        "by true log(Mh) bin, to counter shrinkage-to-the-mean in the sparse "
+                        "tails seen in eval_vs_truth.pdf. See Yang et al. 2021 (module docstring).")
     p.add_argument("--reweight-alpha", type=float, default=0.5,
-                   help="Exponent on 1/count(bin); 1.0 = fully flatten, 0.0 = no reweighting.")
+                   help="Exponent on 1/smoothed-density(bin); 1.0 = fully flatten, 0.0 = no reweighting.")
     p.add_argument("--reweight-bins", type=int, default=30)
+    p.add_argument("--lds-kernel-sigma", type=float, default=2.0,
+                   help="Gaussian kernel std, in BINS, used to smooth the per-bin example-count "
+                        "histogram before computing inverse-density weights (the actual LDS step "
+                        "from Yang et al. 2021). 0 disables smoothing (raw per-bin counts, the "
+                        "v3 behavior that needed aggressive --max-weight-ratio clipping).")
     p.add_argument("--max-weight-ratio", type=float, default=10.0,
                    help="Clip the combined (mass x catalog-count) per-example weight to "
                         "[median/ratio, median*ratio], to stop a few extreme-weight examples "
@@ -732,6 +810,7 @@ def main():
         reweight_by_mass=args.reweight_by_mass,
         reweight_alpha=args.reweight_alpha,
         reweight_bins=args.reweight_bins,
+        lds_kernel_sigma=args.lds_kernel_sigma,
         max_weight_ratio=args.max_weight_ratio,
     )
 
