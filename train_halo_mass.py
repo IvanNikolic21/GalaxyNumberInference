@@ -64,6 +64,17 @@ Model and training choices, in one place for reference
   symmetric kernel BEFORE computing inverse weights, so a bin's effective
   weight reflects the smoothed density in its neighborhood rather than its
   own noisy count -- see _smooth_bin_counts() and its use below.
+- beta-NLL, the fix for the v2/v4 sigma-collapse (loss frozen with log_sigma
+  pegged near its ceiling by epoch ~10, under TWO very different reweighting
+  schemes -- ruling out reweighting as the mechanism): Seitzer, Tavakoli,
+  Kirchhof & Archambeau (2022), "On the Pitfalls of Heteroscedastic
+  Uncertainty Estimation with Probabilistic Neural Networks," ICLR,
+  https://arxiv.org/abs/2203.09168. Diagnosis: plain NLL's gradient on mu is
+  proportional to 1/sigma^2, so sigma drifting up even slightly starves mu's
+  gradient, mu stops improving, and inflating sigma further becomes the only
+  way left to reduce the loss -- a runaway feedback loop. Fix: scale each
+  example's NLL by sigma.detach()**(2*beta) (--beta-nll, default 0.5) --
+  see gaussian_nll() below for the full mechanism.
 
 Usage
 -----
@@ -568,7 +579,7 @@ class HaloMassNetwork(nn.Module):
         return mu, log_sigma
 
 
-def gaussian_nll(mu, log_sigma, target, weight):
+def gaussian_nll(mu, log_sigma, target, weight, beta=0.0):
     # Negative log-likelihood of `target` under a Normal(mu, sigma^2), per
     # example, then combined into one WEIGHTED MEAN loss across the batch.
     # The Normal log-density is
@@ -581,11 +592,50 @@ def gaussian_nll(mu, log_sigma, target, weight):
     # the quadratic term needs sigma = exp(log_sigma) explicitly.
     sigma = torch.exp(log_sigma)
     nll = log_sigma + 0.5 * math.log(2 * math.pi) + 0.5 * ((target - mu) / sigma) ** 2
+
+    if beta > 0:
+        # beta-NLL (Seitzer, Tavakoli, Kirchhof & Archambeau 2022, "On the
+        # Pitfalls of Heteroscedastic Uncertainty Estimation with
+        # Probabilistic Neural Networks," https://arxiv.org/abs/2203.09168;
+        # see the module docstring above). Plain NLL's gradient w.r.t. mu is
+        # proportional to 1/sigma^2 -- so if sigma drifts up even slightly
+        # (noise, an unlucky batch), mu's gradient shrinks, mu stops
+        # improving, and the only way left to reduce the loss is inflating
+        # sigma further, which shrinks mu's gradient more: a runaway
+        # positive-feedback loop straight into "sigma eats the loss, mu
+        # never learns" -- exactly the v2/v4 collapse (loss frozen at
+        # log_sigma pegged near its ceiling by epoch ~10), which happened
+        # under TWO very different reweighting schemes, ruling out
+        # reweighting itself as the mechanism.
+        #
+        # The fix: multiply each example's NLL by sigma.detach()**(2*beta)
+        # -- a per-example scalar that tracks the network's CURRENT sigma
+        # for that example, but contributes NO gradient of its own (.detach()
+        # stops autograd from tracing back through it). Differentiating the
+        # now-weighted loss w.r.t. mu gives a term proportional to
+        # sigma^(2*beta) * (target-mu)/sigma^2 = (target-mu) * sigma^(2*beta-2):
+        # beta=0 recovers plain NLL (the 1/sigma^2 feedback problem,
+        # unchanged); beta=1 makes mu's gradient fully INDEPENDENT of sigma
+        # (pure MSE-like pull toward target, sigma can't starve it at all);
+        # beta=0.5 (this script's default) is the paper's general-purpose
+        # middle ground -- gradient ~ 1/sigma instead of 1/sigma^2, enough
+        # to break the runaway feedback while still training a genuinely
+        # heteroscedastic sigma. sigma's OWN gradient (from differentiating
+        # w.r.t. log_sigma) still flows normally through the unweighted nll
+        # expression above, just scaled by this same frozen per-example
+        # factor -- beta-NLL does not stop sigma from learning, only
+        # decouples how hard IT'S PULLED from mu's learning signal.
+        nll = nll * (sigma.detach() ** (2 * beta))
+
     # Weighted average (not weighted sum): dividing by weight.sum() instead
     # of by batch size keeps the loss on the same natural scale as an
     # unweighted mean NLL regardless of how large/small the weights are
     # (e.g. after the mass-reweighting/clipping above), which is what makes
     # a single shared --lr sensible whether or not reweighting is enabled.
+    # (weight here is the mass/catalog-count example weight from
+    # HaloMassDataset, independent of and multiplicatively combined with the
+    # beta-NLL factor above -- the two address different problems and don't
+    # interact.)
     return (nll * weight).sum() / weight.sum()
 
 
@@ -593,7 +643,7 @@ def gaussian_nll(mu, log_sigma, target, weight):
 # Train / val epoch
 # ---------------------------------------------------------------------------
 
-def train_epoch(model, loader, optimizer, device, grad_clip=5.0):
+def train_epoch(model, loader, optimizer, device, grad_clip=5.0, beta=0.0):
     model.train()  # enables Dropout + (if present) BatchNorm's training-mode behavior; LayerNorm is unaffected
     total = 0.0
     for x, target, weight in loader:
@@ -606,7 +656,7 @@ def train_epoch(model, loader, optimizer, device, grad_clip=5.0):
         # every batch or gradients would silently keep adding up.
         optimizer.zero_grad()
         mu, log_sigma = model(x)
-        loss = gaussian_nll(mu, log_sigma, target, weight)
+        loss = gaussian_nll(mu, log_sigma, target, weight, beta=beta)
         # Backpropagation: populates every parameter's .grad with
         # d(loss)/d(parameter), via autograd walking the computation graph
         # built while computing `loss` above.
@@ -636,6 +686,13 @@ def val_epoch(model, loader, device):
         for x, target, weight in loader:
             x, target, weight = x.to(device), target.to(device), weight.to(device)
             mu, log_sigma = model(x)
+            # Deliberately NOT passing beta here (defaults to 0.0, plain
+            # NLL): beta-NLL reshapes the TRAINING objective to fix an
+            # optimization pathology, but val_loss should stay the honest,
+            # beta-independent likelihood -- otherwise "best_val" in main()
+            # would mean something different for every --beta-nll value,
+            # and best-checkpoint selection across runs wouldn't be
+            # comparable.
             total += gaussian_nll(mu, log_sigma, target, weight).item()
     return total / len(loader)
 
@@ -742,6 +799,11 @@ def parse_args():
     p.add_argument("--grad-clip", type=float, default=5.0,
                    help="Max gradient norm (0 disables). Cheap insurance against the same "
                         "instability clipped example weights target.")
+    p.add_argument("--beta-nll", type=float, default=0.5,
+                   help="beta-NLL exponent (Seitzer et al. 2022, module docstring): multiplies "
+                        "each example's NLL by sigma.detach()**(2*beta) during TRAINING ONLY "
+                        "(val_loss always uses plain NLL, beta=0). 0.0 = plain NLL (the v2/v4 "
+                        "collapse-prone loss); 1.0 = mu's gradient fully decoupled from sigma.")
     p.add_argument("--diag-every", type=int, default=10,
                    help="Log per-mass-bin val RMS/bias/coverage every N epochs (0 to disable).")
     p.add_argument("--diag-bins", type=int, default=6)
@@ -855,7 +917,8 @@ def main():
 
     best_val = float('inf')
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_epoch(model, train_loader, optimizer, device, grad_clip=args.grad_clip)
+        train_loss = train_epoch(model, train_loader, optimizer, device,
+                                  grad_clip=args.grad_clip, beta=args.beta_nll)
         val_loss   = val_epoch(model, val_loader, device)
         # Advance the LR schedule by one step (= one epoch here, since it's
         # called once per epoch rather than once per batch).

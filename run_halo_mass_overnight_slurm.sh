@@ -16,34 +16,40 @@
 ##SBATCH --account=your_account
 
 # =============================================================================
-# Overnight halo-mass model retrain -- v4.
+# Overnight halo-mass model retrain -- v5.
 #
-# v2 added --reweight-by-mass (raw inverse-bin-count loss reweighting) +
-# bigger net, but collapsed (sigma pegged at its ceiling for ~every example,
-# loss frozen bit-for-bit by epoch ~10) because a few examples in sparse
-# bins got >100x the weight of others and dominated every batch's gradient.
-# v3 patched over that with --max-weight-ratio (clip the combined weight to
-# [median/10, median*10]) + --grad-clip -- this DID stop the collapse, but
-# v3's own per-bin diagnostics (and eval_vs_truth_v3.pdf) showed the
-# shrinkage-to-the-mean bias pattern was essentially unchanged from v1: the
-# aggressive clipping needed to prevent collapse also neutered most of the
-# reweighting's intended effect on exactly the sparse tail bins that needed it.
+# v2/v3 were about LOSS REWEIGHTING (raw inverse-bin-count, then clipped,
+# then (v4) Label-Distribution-Smoothed -- see train_halo_mass.py's module
+# docstring, Yang et al. 2021). v4 made the reweighting itself demonstrably
+# gentler (smoothed density range [377, 12198] vs v3's raw [0, 20404], and
+# only 0.45% of examples needed clipping) -- and it STILL collapsed, with
+# the exact same signature as v2 (loss frozen at log_sigma pegged near its
+# ceiling by epoch ~10). Collapsing under two very different reweighting
+# strengths rules OUT reweighting as the mechanism.
 #
-# v4 fixes the ROOT cause instead of clipping around it: Label Distribution
-# Smoothing (Yang et al. 2021, "Delving into Deep Imbalanced Regression",
-# https://arxiv.org/abs/2102.09554 -- see train_halo_mass.py's module
-# docstring). Raw per-bin counts are a NOISY density estimate for a sparsely
-# populated bin, which is what produced the >100x weight ratios in the first
-# place; LDS kernel-smooths the count histogram across neighboring bins
-# BEFORE inverting it (new --lds-kernel-sigma, in bin units), giving a much
-# more stable weight distribution without needing aggressive clipping
-# downstream. --max-weight-ratio/--grad-clip are left on as a safety net --
-# check the training log's "N/len clipped" line to see how much they're
-# actually still binding now that the input to them is smoother.
+# The real cause: a known pathology of jointly training a Gaussian mean and
+# variance from one NLL loss (independent of class/mass imbalance). Plain
+# NLL's gradient on mu is proportional to 1/sigma^2, so sigma drifting up
+# even slightly starves mu's gradient; mu stops improving; the only way left
+# to reduce loss is inflating sigma further -- a runaway feedback loop.
+# Verified numerically: at the v2/v4 collapse sigma (~20), mu's gradient
+# under plain NLL is ~400x weaker than at sigma=1.
+#
+# v5's fix: beta-NLL (Seitzer, Tavakoli, Kirchhof & Archambeau 2022,
+# "On the Pitfalls of Heteroscedastic Uncertainty Estimation with
+# Probabilistic Neural Networks," https://arxiv.org/abs/2203.09168 -- see
+# train_halo_mass.py's module docstring and gaussian_nll()). New
+# --beta-nll 0.5 scales each example's NLL by sigma.detach()**(2*beta)
+# during training (val_loss stays plain NLL for comparability across runs)
+# -- at beta=0.5 that same 400x gradient-starvation ratio drops to ~20x,
+# breaking the feedback loop while still training a genuinely
+# heteroscedastic sigma. LDS reweighting (v4) is kept ON alongside this --
+# they fix different problems and don't conflict.
 #
 # Re-evaluates against eval_vs_truth.pdf's own script at the end so the
-# before/after comparison is a straight diff across all four PDFs
-# (v1 unweighted, v2 collapsed, v3 clipped-raw-reweight, v4 LDS).
+# before/after comparison is a straight diff across all five PDFs
+# (v1 unweighted, v2 collapsed, v3 clipped-raw-reweight, v4 LDS-still-
+# collapsed, v5 LDS+beta-NLL).
 # =============================================================================
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
@@ -69,13 +75,14 @@ DB1=$NEIGHBORS/nre_database_prior_capped_seed1955
 DB2=$NEIGHBORS/nre_database_prior_capped_seed2027
 DB3=$NEIGHBORS/nre_database_prior_capped_seed3142
 DB4=$NEIGHBORS/nre_database_prior_capped_seed4242
-OUT=$NEIGHBORS/halo_mass_model_multibox4_v4
+OUT=$NEIGHBORS/halo_mass_model_multibox4_v5
 
-echo ">>> Training halo-mass model v4 (LDS reweighting + bigger net + longer run)"
+echo ">>> Training halo-mass model v5 (LDS reweighting + beta-NLL + bigger net + longer run)"
 python train_halo_mass.py \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --only-angular --epochs 300 --max-per-catalog 0 --weight-by-catalog-count \
     --reweight-by-mass --reweight-alpha 0.5 --reweight-bins 30 --lds-kernel-sigma 2.0 \
+    --beta-nll 0.5 \
     --max-weight-ratio 10.0 --grad-clip 5.0 \
     --diag-every 10 --diag-bins 8 \
     --hidden-dims 512 512 512 512 512 512 \
@@ -88,7 +95,7 @@ python evaluate_halo_mass_model.py \
     --model-dir $OUT \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --n-examples 500 \
-    --output $OUT/eval_vs_truth_v4.pdf
+    --output $OUT/eval_vs_truth_v5.pdf
 
 echo "======================================================"
 echo "Finished: $(date)"
