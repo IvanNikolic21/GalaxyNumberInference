@@ -807,6 +807,15 @@ def parse_args():
     p.add_argument("--diag-every", type=int, default=10,
                    help="Log per-mass-bin val RMS/bias/coverage every N epochs (0 to disable).")
     p.add_argument("--diag-bins", type=int, default=6)
+    p.add_argument("--early-stop-patience", type=int, default=30,
+                   help="Stop training if val loss hasn't improved for this many consecutive "
+                        "epochs (0 disables early stopping, training always runs the full "
+                        "--epochs). The v5 run's val loss bottomed out around epoch ~100 then "
+                        "rose to 30x that by epoch 300 (pure overfitting) -- this stops that waste "
+                        "automatically. halo_mass_best.pt is always the checkpoint to use either way.")
+    p.add_argument("--early-stop-min-delta", type=float, default=0.0,
+                   help="Minimum val-loss decrease to count as an improvement for "
+                        "--early-stop-patience (0.0 = any decrease at all counts).")
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
 
@@ -916,6 +925,16 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     best_val = float('inf')
+    # Epochs since the last val improvement -- the early-stopping counter.
+    # The v5 run showed WHY this matters concretely: best val (0.3346) was
+    # reached around epoch ~100, then val loss climbed to 11.06 by epoch 300
+    # while train loss kept dropping -- 200 epochs of pure overfitting, which
+    # also meant the per-bin diagnostic table printed at the end of that run
+    # (log_per_bin_metrics, called on the CURRENT, by-then-overfit model, not
+    # on halo_mass_best.pt) was actively misleading about how the actually-
+    # saved model performs.
+    epochs_since_improvement = 0
+    stopped_early = False
     for epoch in range(1, args.epochs + 1):
         train_loss = train_epoch(model, train_loader, optimizer, device,
                                   grad_clip=args.grad_clip, beta=args.beta_nll)
@@ -924,23 +943,45 @@ def main():
         # called once per epoch rather than once per batch).
         scheduler.step()
         log.info(f"Epoch {epoch:3d}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}")
-        if val_loss < best_val:
+        # args.early_stop_min_delta guards against resetting the patience
+        # counter on a change too small to be a real improvement (float
+        # noise between near-identical epochs) -- 0.0 (the default) means
+        # any decrease at all counts.
+        if val_loss < best_val - args.early_stop_min_delta:
             # Checkpoint ONLY the single best-val-loss model seen so far
             # (overwriting halo_mass_best.pt each time a new best is found)
-            # -- standard early-stopping-adjacent practice: the final epoch's
-            # weights (saved separately below, after the loop) aren't
-            # necessarily the best if validation loss started increasing
-            # (overfitting) partway through the run.
+            # -- the final epoch's weights (saved separately below, after
+            # the loop) aren't necessarily the best if validation loss
+            # started increasing (overfitting) partway through the run, and
+            # with early stopping the final epoch IS, by construction,
+            # already somewhat into that regime (that's what triggers the
+            # stop) -- halo_mass_best.pt is the one to actually use.
             best_val = val_loss
+            epochs_since_improvement = 0
             torch.save(model.state_dict(), args.output_dir / "halo_mass_best.pt")
             log.info(f"  -> New best model saved (val={val_loss:.4f})")
+        else:
+            epochs_since_improvement += 1
         if args.diag_every > 0 and epoch % args.diag_every == 0:
             log_per_bin_metrics(model, val_loader, device, n_bins=args.diag_bins)
+        if args.early_stop_patience > 0 and epochs_since_improvement >= args.early_stop_patience:
+            log.info(f"Early stopping at epoch {epoch}: no val improvement for "
+                      f"{epochs_since_improvement} epochs (--early-stop-patience="
+                      f"{args.early_stop_patience}). Best val {best_val:.4f} is in halo_mass_best.pt; "
+                      f"note the LR schedule was set up for the full {args.epochs} epochs and never "
+                      f"finished its cosine decay -- this only affects halo_mass_final.pt below, "
+                      f"not halo_mass_best.pt, which was already saved under whatever LR was active "
+                      f"when it was reached.")
+            stopped_early = True
+            break
 
     # Also save the FINAL epoch's weights (separate from the best-val
-    # checkpoint above), plus everything needed to reconstruct the model
-    # and reproduce its input preprocessing later without re-deriving
-    # anything from the training database (used by evaluate_halo_mass_model.py):
+    # checkpoint above, and -- with early stopping on -- typically somewhat
+    # WORSE than it, by construction: stopping is triggered by a run of
+    # epochs with no improvement, so the final epoch is inside that run, not
+    # at its start), plus everything needed to reconstruct the model and
+    # reproduce its input preprocessing later without re-deriving anything
+    # from the training database (used by evaluate_halo_mass_model.py):
     #   model_config.npz   -- architecture hyperparameters (HaloMassNetwork's
     #                         constructor arguments) and which env_to_array
     #                         feature layout was used.
@@ -955,7 +996,7 @@ def main():
              only_angular=int(args.only_angular),
              summary_mode=int(args.summary_mode))
     np.savez(args.output_dir / "normalization.npz", param_min=param_min, param_max=param_max)
-    log.info(f"Training complete. Best val loss: {best_val:.4f}")
+    log.info(f"Training {'stopped early' if stopped_early else 'complete'}. Best val loss: {best_val:.4f}")
     log.info(f"Model saved to: {args.output_dir}")
 
 
