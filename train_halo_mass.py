@@ -816,6 +816,14 @@ def parse_args():
     p.add_argument("--early-stop-min-delta", type=float, default=0.0,
                    help="Minimum val-loss decrease to count as an improvement for "
                         "--early-stop-patience (0.0 = any decrease at all counts).")
+    p.add_argument("--early-stop-warmup", type=int, default=70,
+                   help="Epochs before the early-stopping patience counter starts (best_val/"
+                        "checkpointing still run every epoch regardless). Needed because escaping "
+                        "the early high-sigma, barely-trained regime causes a TEMPORARY val-loss "
+                        "spike (plain NLL scores a barely-trained high-sigma model deceptively well) "
+                        "before real convergence -- v5/v6 both show this spike persisting past "
+                        "epoch 40-50; without a warmup, patience can exhaust DURING the spike and "
+                        "save the worst checkpoint in the run (see the long comment in main()).")
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
 
@@ -926,13 +934,32 @@ def main():
 
     best_val = float('inf')
     # Epochs since the last val improvement -- the early-stopping counter.
-    # The v5 run showed WHY this matters concretely: best val (0.3346) was
+    # The v5 run showed WHY early stopping matters: best val (0.3346) was
     # reached around epoch ~100, then val loss climbed to 11.06 by epoch 300
-    # while train loss kept dropping -- 200 epochs of pure overfitting, which
-    # also meant the per-bin diagnostic table printed at the end of that run
-    # (log_per_bin_metrics, called on the CURRENT, by-then-overfit model, not
-    # on halo_mass_best.pt) was actively misleading about how the actually-
-    # saved model performs.
+    # while train loss kept dropping -- 200 epochs of pure overfitting.
+    #
+    # But the FIRST early-stopping attempt (v6) immediately exposed a sharper
+    # bug: it stopped at epoch 41 with "best val" still 3.9191 -- the exact
+    # plain-NLL collapse floor from the pre-beta-NLL runs (log_sigma pegged
+    # near its sigmoid ceiling). beta-NLL WAS working (train loss was
+    # dropping normally, nothing like v2/v4's frozen 3.9190 the whole run),
+    # but escaping that early high-sigma, barely-trained regime causes a
+    # TEMPORARY SPIKE in val_loss (deliberately plain NLL, beta=0, for
+    # comparability across --beta-nll settings -- see val_epoch above) as mu
+    # starts moving and its errors are, for a while, scored against a sigma
+    # that hasn't re-calibrated yet. v5 shows the same spike at epoch 50
+    # (val=25.88) before recovering to val=0.53 by epoch 100. A plain
+    # patience counter has no way to tell "still stuck" apart from "mid-
+    # recovery from a known early transient" -- 30 epochs of a worse-looking
+    # val loss reads identically to both, so it fired right as real learning
+    # was getting started and saved the single WORST checkpoint in the run.
+    #
+    # Fix: args.early_stop_warmup epochs where the patience COUNTER doesn't
+    # run at all (best_val/checkpointing still happen normally every epoch,
+    # so there's always a saved model even if the job dies mid-warmup) --
+    # only once epoch > warmup does "no improvement" start being held
+    # against the run, giving it a full fresh --early-stop-patience window
+    # AFTER the known escape-transient, not overlapping with it.
     epochs_since_improvement = 0
     stopped_early = False
     for epoch in range(1, args.epochs + 1):
@@ -947,33 +974,30 @@ def main():
         # counter on a change too small to be a real improvement (float
         # noise between near-identical epochs) -- 0.0 (the default) means
         # any decrease at all counts.
-        if val_loss < best_val - args.early_stop_min_delta:
+        improved = val_loss < best_val - args.early_stop_min_delta
+        if improved:
             # Checkpoint ONLY the single best-val-loss model seen so far
             # (overwriting halo_mass_best.pt each time a new best is found)
-            # -- the final epoch's weights (saved separately below, after
-            # the loop) aren't necessarily the best if validation loss
-            # started increasing (overfitting) partway through the run, and
-            # with early stopping the final epoch IS, by construction,
-            # already somewhat into that regime (that's what triggers the
-            # stop) -- halo_mass_best.pt is the one to actually use.
+            # -- tracked EVERY epoch, warmup or not (see comment above), so
+            # there's always a checkpoint on disk; it's the patience COUNTER
+            # below, not this save, that's gated by warmup.
             best_val = val_loss
-            epochs_since_improvement = 0
             torch.save(model.state_dict(), args.output_dir / "halo_mass_best.pt")
             log.info(f"  -> New best model saved (val={val_loss:.4f})")
-        else:
-            epochs_since_improvement += 1
         if args.diag_every > 0 and epoch % args.diag_every == 0:
             log_per_bin_metrics(model, val_loader, device, n_bins=args.diag_bins)
-        if args.early_stop_patience > 0 and epochs_since_improvement >= args.early_stop_patience:
-            log.info(f"Early stopping at epoch {epoch}: no val improvement for "
-                      f"{epochs_since_improvement} epochs (--early-stop-patience="
-                      f"{args.early_stop_patience}). Best val {best_val:.4f} is in halo_mass_best.pt; "
-                      f"note the LR schedule was set up for the full {args.epochs} epochs and never "
-                      f"finished its cosine decay -- this only affects halo_mass_final.pt below, "
-                      f"not halo_mass_best.pt, which was already saved under whatever LR was active "
-                      f"when it was reached.")
-            stopped_early = True
-            break
+        if epoch > args.early_stop_warmup:
+            epochs_since_improvement = 0 if improved else epochs_since_improvement + 1
+            if args.early_stop_patience > 0 and epochs_since_improvement >= args.early_stop_patience:
+                log.info(f"Early stopping at epoch {epoch}: no val improvement for "
+                          f"{epochs_since_improvement} epochs since the {args.early_stop_warmup}-epoch "
+                          f"warmup ended (--early-stop-patience={args.early_stop_patience}). Best val "
+                          f"{best_val:.4f} is in halo_mass_best.pt; note the LR schedule was set up for "
+                          f"the full {args.epochs} epochs and never finished its cosine decay -- this "
+                          f"only affects halo_mass_final.pt below, not halo_mass_best.pt, which was "
+                          f"already saved under whatever LR was active when it was reached.")
+                stopped_early = True
+                break
 
     # Also save the FINAL epoch's weights (separate from the best-val
     # checkpoint above, and -- with early stopping on -- typically somewhat
