@@ -95,6 +95,24 @@ Model and training choices, in one place for reference
   if plain sum-pooling isn't enough, since attention can weight closer/
   brighter neighbors differently instead of treating the pooling sum as a
   single undifferentiated whole.
+- UVLF-plausibility reweighting (--uvlf-reweight): v8 (Deep Sets) STILL
+  showed the same shrinkage-to-the-mean bias (RMS identical to v7, 0.361
+  dex both), which led to checking whether the uniform theta PRIOR itself
+  was the problem rather than anything in the model. diagnose_uvlf_
+  stratified_neighbor_count.py found the prior is overwhelmingly UVLF-
+  inconsistent (sampled log-likelihoods from -1.5 to -56,069,751.6 across
+  2000 theta), and plot_eval_vs_truth_uvlf_consistent.py confirmed a
+  trained model STILL carries a residual bias even when evaluated only on
+  the UVLF-consistent subset -- i.e. the bias partly reflects what the
+  model was TRAINED on, not just what it's evaluated on. This reweights the
+  training loss by each example's parent theta's UVLF plausibility,
+  reusing the exact log-likelihood infer_nre.py's --use-uvlf path and
+  check_uvlf_consistency.py already compute, converted to an equivalent
+  Gaussian sigma and passed through a smooth Gaussian taper
+  (--uvlf-sigma-scale) rather than a raw softmax -- see the long comment
+  above this block in HaloMassDataset for why the raw-softmax version
+  would numerically underflow nearly the entire dataset to zero weight
+  given this prior's enormous log-likelihood range.
 
 Usage
 -----
@@ -255,6 +273,8 @@ class HaloMassDataset(Dataset):
         reweight_bins: int = 30,
         lds_kernel_sigma: float = 2.0,
         max_weight_ratio: float = 10.0,
+        uvlf_reweight: bool = False,
+        uvlf_sigma_scale: float = 5.0,
     ):
         # Theta normalization bounds (computed once, in main(), across ALL
         # loaded database files, and passed in here) -- stored so
@@ -437,6 +457,110 @@ class HaloMassDataset(Dataset):
                       f"raw counts range [{counts.min()}, {counts.max()}], "
                       f"smoothed range [{smoothed_counts.min():.1f}, {smoothed_counts.max():.1f}]")
 
+        if uvlf_reweight and len(self.params) > 0:
+            # UVLF-plausibility reweighting. Motivated by
+            # diagnose_uvlf_stratified_neighbor_count.py: the UNIFORM theta
+            # prior this database was built from is overwhelmingly
+            # inconsistent with the observed UVLF (Donnan+24) -- sampled
+            # log-likelihoods ranged from -1.5 to -56,069,751.6 across just
+            # 2000 theta, i.e. nearly the whole prior is astrophysically
+            # impossible. A model trained on it unweighted spends almost
+            # all its gradient budget fitting examples from theta that no
+            # real observation could ever favor, diluting whatever signal
+            # exists in the tiny physically-relevant region --
+            # plot_eval_vs_truth_uvlf_consistent.py showed a model trained
+            # this way still carries a residual shrinkage bias even when
+            # EVALUATED only on UVLF-consistent theta, consistent with this
+            # diagnosis. This reweights the TRAINING loss itself by each
+            # example's parent theta's UVLF plausibility, continuously (no
+            # hard cutoff, matching how Ivan asked for the diagnostic
+            # stratification to work) -- same underlying log-likelihood
+            # infer_nre.py's --use-uvlf path and check_uvlf_consistency.py
+            # already use, not a new consistency criterion invented here.
+            #
+            # Imported locally (not at module level) so running this script
+            # WITHOUT --uvlf-reweight never requires hmf/scipy installed.
+            from uvlf import Mason15, Observations
+            from scipy.stats import chi2, norm
+
+            log.info("Computing per-theta UVLF plausibility for reweighting "
+                      "(builds Mason15(z=10.0) once, then one calculate_UVLF call per "
+                      "DISTINCT theta, cached) ...")
+            # Mason15's Muv_Mh_dict is only ever built for z=10.0 (see
+            # uvlf.py) -- this database is at z=10.5 (build_nre_database.py's
+            # REDSHIFT), but check_uvlf_consistency.py already established
+            # the precedent of using Mason15(z=10.0) for this exact z=10.5
+            # problem, which is followed here rather than inventing a
+            # different answer to a question the rest of the pipeline has
+            # already settled the same way.
+            mason15  = Mason15(z=10.0)
+            obs      = Observations(ang=False, uvlf=True)
+            muv_obs, phi_obs, (sig_p, sig_m) = obs.get_obs_uvlf_z10_Donnan24()
+            muv_grid = np.linspace(-25, -13, 100)
+            dof      = len(muv_obs)  # UVLF data-vector length; theta is EVALUATED against
+                                       # it, not fit to it, so no fitted-parameter dof correction.
+
+            sigma_cache = {}
+
+            def _uvlf_sigma(muv_add, sa, sb):
+                # Same chi2 -> p -> sigma conversion as
+                # plot_eval_vs_truth_uvlf_consistent.py, verified exactly
+                # against the dof=1 reference case there (chi2=25 -> 5.0
+                # sigma requires the /2, since chi2.sf is a one-sided tail
+                # probability but chi2 itself is the two-sided-squared sum
+                # of Gaussian deviates).
+                key = (round(float(muv_add), 8), round(float(sa), 8), round(float(sb), 8))
+                if key in sigma_cache:
+                    return sigma_cache[key]
+                phi_pred_grid = mason15.calculate_UVLF(muv_add, sa, sb, Muv_grid=muv_grid)
+                phi_pred  = np.interp(muv_obs, muv_grid, phi_pred_grid)
+                sigma_obs = np.where(phi_pred >= phi_obs, sig_p, sig_m)
+                ll = -0.5 * np.sum(((phi_obs - phi_pred) / sigma_obs) ** 2)
+                p  = chi2.sf(-2.0 * ll, df=dof) / 2.0
+                p  = np.clip(p, 0.0, 1.0 - 1e-16)
+                sigma_equiv = max(0.0, float(norm.isf(p)))
+                sigma_cache[key] = sigma_equiv
+                return sigma_equiv
+
+            # NOT exp(ll - ll_max): with this prior's enormous log-L range
+            # (down to -56 MILLION), that raw softmax would underflow to
+            # EXACTLY 0.0 for all but a literal handful of examples in
+            # double precision (exp(x) underflows below x~-745) -- rather
+            # than continuously downweighting implausible theta, it would
+            # silently hard-delete ~all of the training set, the opposite
+            # of what a "continuous, no hard cutoff" reweighting is
+            # supposed to do. Working in SIGMA units instead compresses the
+            # dynamic range first (sigma grows only like sqrt(-ll)), THEN
+            # applying a Gaussian taper exp(-0.5*(sigma/scale)^2) gives a
+            # smooth, gradual falloff across the "broad, a few sigma"
+            # plausibility range Ivan described, while still cleanly
+            # vanishing for the truly absurd tail. Conceptually the same
+            # family of idea as tempering an extreme likelihood before
+            # using it as a weight, e.g. "power posteriors" (Friel &
+            # Pettitt 2008, J. R. Stat. Soc. B, 70(3):589-607) -- not a
+            # literal implementation of that method, just the same
+            # motivation (an untempered extreme likelihood is numerically
+            # unusable as a weight).
+            sigmas = np.array([_uvlf_sigma(p_[0], p_[1], p_[2]) for p_ in self.params])
+            uvlf_weight = np.exp(-0.5 * (sigmas / uvlf_sigma_scale) ** 2)
+            uvlf_weight = uvlf_weight / uvlf_weight.mean()
+            self.weights = (np.array(self.weights) * uvlf_weight).tolist()
+            # Effective sample size (standard importance-weighting
+            # diagnostic: ESS = (sum w)^2 / sum(w^2), equal to len(weights)
+            # if all weights are equal and shrinking toward 0 as the weight
+            # distribution gets more lopsided) -- given how overwhelmingly
+            # UVLF-inconsistent this prior is, most of the dataset's TOTAL
+            # weight is likely to end up concentrated on a small fraction
+            # of examples; this makes that concentration visible instead of
+            # a hidden side effect of the reweighting.
+            ess = float(uvlf_weight.sum() ** 2 / (uvlf_weight ** 2).sum())
+            log.info(f"Applied UVLF-plausibility reweighting (sigma_scale={uvlf_sigma_scale}, "
+                      f"{len(sigma_cache)} distinct theta); sigma range "
+                      f"[{sigmas.min():.1f}, {sigmas.max():.1f}], "
+                      f"weight range [{uvlf_weight.min():.2e}, {uvlf_weight.max():.2e}], "
+                      f"effective sample size {ess:.0f}/{len(uvlf_weight)} "
+                      f"({ess/len(uvlf_weight):.1%})")
+
         if max_weight_ratio is not None and max_weight_ratio > 0 and len(self.weights) > 0:
             # The v2 overnight run showed train/val loss freeze bit-for-bit by
             # epoch ~10 with log_sigma pegged at its ceiling for ~every
@@ -456,13 +580,35 @@ class HaloMassDataset(Dataset):
             # docstring above -- applied to an example weight instead of an
             # importance-sampling ratio.)
             w = np.array(self.weights)
-            median_w = np.median(w)
-            lo, hi = median_w / max_weight_ratio, median_w * max_weight_ratio
-            n_clipped = int(np.sum((w < lo) | (w > hi)))
-            w = np.clip(w, lo, hi)
-            self.weights = w.tolist()
-            log.info(f"Clipped combined example weights to [{lo:.4g}, {hi:.4g}] "
-                      f"(ratio={max_weight_ratio}x median); {n_clipped}/{len(w)} examples clipped")
+            # Median computed over STRICTLY POSITIVE weights only, and the
+            # lower bound is fixed at 0 rather than median/ratio -- found
+            # necessary once --uvlf-reweight entered the picture: that
+            # taper can legitimately drive MOST weights to exactly 0.0 (by
+            # design -- that's the whole point, downweighting implausible
+            # theta toward nothing), which would make the OLD median-over-
+            # everything exactly 0 too, collapsing [median/ratio,
+            # median*ratio] to [0, 0] and clipping the ENTIRE weight array
+            # to zero -- a silent, catastrophic weight.sum()==0 crash in
+            # gaussian_nll on the very first batch. Verified this failure
+            # mode numerically against a realistic lopsided sigma
+            # distribution before this fix existed. The lower clip was
+            # never actually load-bearing for the ORIGINAL v2 bug either
+            # (that was specifically about a few examples' weight being too
+            # LARGE, not too small) -- dropping it is a correction, not a
+            # loosening of the protection that bug needed.
+            positive = w[w > 0]
+            if len(positive) == 0:
+                log.warning("All combined example weights are exactly 0 -- "
+                            "--max-weight-ratio clipping skipped (nothing to clip around).")
+            else:
+                median_w = np.median(positive)
+                hi = median_w * max_weight_ratio
+                n_clipped = int(np.sum(w > hi))
+                w = np.minimum(w, hi)
+                self.weights = w.tolist()
+                log.info(f"Clipped combined example weights to at most {hi:.4g} "
+                          f"(ratio={max_weight_ratio}x median-of-positive-weights); "
+                          f"{n_clipped}/{len(w)} examples clipped")
 
     def __len__(self):
         # Required by the torch.utils.data.Dataset interface: DataLoader
@@ -950,8 +1096,21 @@ def parse_args():
                         "histogram before computing inverse-density weights (the actual LDS step "
                         "from Yang et al. 2021). 0 disables smoothing (raw per-bin counts, the "
                         "v3 behavior that needed aggressive --max-weight-ratio clipping).")
+    p.add_argument("--uvlf-reweight", action="store_true",
+                   help="Reweight the training loss by each example's parent theta's UVLF "
+                        "plausibility (continuous Gaussian taper in equivalent-sigma units, "
+                        "--uvlf-sigma-scale -- see the long comment above this block in "
+                        "HaloMassDataset). Requires hmf and scipy (only imported if this flag "
+                        "is set). Motivated by plot_eval_vs_truth_uvlf_consistent.py showing a "
+                        "residual bias even when evaluating only on UVLF-consistent theta.")
+    p.add_argument("--uvlf-sigma-scale", type=float, default=5.0,
+                   help="Gaussian taper width, in equivalent UVLF sigma units, for "
+                        "--uvlf-reweight (e.g. theta at this many sigma from the observed UVLF "
+                        "get weight ~exp(-0.5)=0.61; much more at 2-3x this). 5.0 matches the "
+                        "'broad, a few sigma' plausibility range already used elsewhere in this "
+                        "project (plot_eval_vs_truth_uvlf_consistent.py's --max-sigma default).")
     p.add_argument("--max-weight-ratio", type=float, default=10.0,
-                   help="Clip the combined (mass x catalog-count) per-example weight to "
+                   help="Clip the combined (mass x catalog-count x UVLF) per-example weight to "
                         "[median/ratio, median*ratio], to stop a few extreme-weight examples "
                         "from dominating a batch's gradient and collapsing sigma to its "
                         "ceiling. 0 or negative disables clipping.")
@@ -1049,6 +1208,8 @@ def main():
         reweight_alpha=args.reweight_alpha,
         reweight_bins=args.reweight_bins,
         lds_kernel_sigma=args.lds_kernel_sigma,
+        uvlf_reweight=args.uvlf_reweight,
+        uvlf_sigma_scale=args.uvlf_sigma_scale,
         max_weight_ratio=args.max_weight_ratio,
     )
 

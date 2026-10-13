@@ -16,39 +16,42 @@
 ##SBATCH --account=your_account
 
 # =============================================================================
-# Overnight halo-mass model retrain -- v8.
+# Overnight halo-mass model retrain -- v9.
 #
-# v5-v7 were all about the LOSS/TRAINING LOOP: beta-NLL fixed the sigma
-# collapse (Seitzer et al. 2022, https://arxiv.org/abs/2203.09168), then
-# early stopping (with a warmup to survive the post-collapse val-loss spike)
-# fixed the overfitting waste. v7 is the first genuinely trustworthy run --
-# mean predicted sigma 0.379, 73.0% coverage (target 68%), stopped cleanly
-# at epoch 100 (best val 0.3328). But its RMS error (0.361 dex) and the
-# per-bin bias table are essentially IDENTICAL to v1's, all the way back to
-# before any of these fixes: the low-mass tail still over-predicts
-# (bias=+0.337), the high-mass tail still under-predicts (bias=-0.218) --
-# the same shrinkage-to-the-mean S-shape every version has shown. Expected:
-# none of v2-v7's fixes ever touched HaloMassNetwork's actual environment
-# ENCODING, only the loss function and training loop around it.
+# v8 added the first architecture change (Deep Sets, --architecture
+# deepset) to target the persistent shrinkage-to-the-mean S-shape that
+# survived every v2-v7 loss/training-loop fix -- but v8's RMS (0.361 dex)
+# and tail bias were essentially IDENTICAL to v7's plain MLP. That led to
+# checking the TRAINING PRIOR itself rather than the model:
+# diagnose_uvlf_stratified_neighbor_count.py found the uniform theta prior
+# this whole database was built from is overwhelmingly UVLF-inconsistent
+# (sampled log-likelihoods from -1.5 to -56,069,751.6 across just 2000
+# theta -- nearly the WHOLE prior is astrophysically impossible), and
+# plot_eval_vs_truth_uvlf_consistent.py confirmed the v8 model STILL shows
+# a residual shrinkage bias even when EVALUATED only on the UVLF-consistent
+# subset (theta within 5 sigma of Donnan+24) -- i.e. the bias partly
+# reflects what the model was TRAINED on (overwhelmingly implausible junk
+# diluting the gradient), not just what it's evaluated on.
 #
-# v8 is the first architecture change: --architecture deepset (Zaheer et
-# al. 2017, https://arxiv.org/abs/1703.06114, module docstring in
-# train_halo_mass.py -- new HaloMassSetNetwork class). HaloMassNetwork
-# flattens the distance-sorted, zero-padded neighbor list into one vector
-# and feeds it to a plain MLP, which has to rediscover permutation-
-# invariance from scratch; HaloMassSetNetwork applies a small shared MLP to
-# EACH neighbor row independently (--phi-dims), masks out padding rows, and
-# sum-pools (--pooling) into one fixed-size embedding before the same
-# ResidualBlock stack as before. Permutation-invariant by construction --
-# this is the first change actually aimed at the persistent S-shape rather
-# than at training stability. Everything else (LDS, beta-NLL, warmup-
-# protected early stopping) is kept identical to v7 for a clean comparison.
+# v9's fix: --uvlf-reweight (new in train_halo_mass.py) scales each
+# example's training loss by its parent theta's UVLF plausibility, reusing
+# the exact log-likelihood infer_nre.py's --use-uvlf path and
+# check_uvlf_consistency.py already compute, via a smooth Gaussian taper in
+# equivalent-sigma units (--uvlf-sigma-scale, module docstring in
+# train_halo_mass.py for why a raw softmax on the log-L would instead
+# underflow ~the whole dataset to zero weight given this prior's range).
+# Kept the Deep Sets architecture from v8 (not reverting it -- it's a
+# separate, independently-motivated fix that may still matter once the
+# prior itself isn't drowning out the signal). Everything else (LDS,
+# beta-NLL, warmup-protected early stopping) is kept identical to v7/v8 for
+# a clean comparison.
 #
-# Re-evaluates against eval_vs_truth.pdf's own script at the end so the
-# before/after comparison is a straight diff across all eight PDFs (v1
-# unweighted, v2 collapsed, v3 clipped-raw-reweight, v4 LDS-still-collapsed,
-# v5 LDS+beta-NLL-overfit, v6 early-stop-fooled-by-spike, v7 warmup-fixed-
-# MLP, v8 warmup-fixed-DeepSets).
+# Re-evaluates TWICE at the end: the usual full-prior eval_vs_truth.pdf
+# (comparable to every prior version), AND the same UVLF-consistent-only
+# check (plot_eval_vs_truth_uvlf_consistent.py, <=5 sigma, matching the one
+# already run against v8) -- that second one is the actual test of whether
+# this fix worked, since that's exactly the plot that showed the residual
+# bias in the first place.
 # =============================================================================
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
@@ -74,14 +77,15 @@ DB1=$NEIGHBORS/nre_database_prior_capped_seed1955
 DB2=$NEIGHBORS/nre_database_prior_capped_seed2027
 DB3=$NEIGHBORS/nre_database_prior_capped_seed3142
 DB4=$NEIGHBORS/nre_database_prior_capped_seed4242
-OUT=$NEIGHBORS/halo_mass_model_multibox4_v8
+OUT=$NEIGHBORS/halo_mass_model_multibox4_v9
 
-echo ">>> Training halo-mass model v8 (Deep Sets architecture + LDS + beta-NLL + early stopping)"
+echo ">>> Training halo-mass model v9 (UVLF-reweighted + Deep Sets + LDS + beta-NLL + early stopping)"
 python train_halo_mass.py \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --only-angular --epochs 300 --max-per-catalog 0 --weight-by-catalog-count \
     --reweight-by-mass --reweight-alpha 0.5 --reweight-bins 30 --lds-kernel-sigma 2.0 \
     --beta-nll 0.5 \
+    --uvlf-reweight --uvlf-sigma-scale 5.0 \
     --max-weight-ratio 10.0 --grad-clip 5.0 \
     --early-stop-patience 30 --early-stop-warmup 70 \
     --diag-every 10 --diag-bins 8 \
@@ -91,12 +95,20 @@ python train_halo_mass.py \
     --output-dir $OUT
 
 echo "======================================================"
-echo ">>> Re-running eval_vs_truth for direct before/after comparison"
+echo ">>> Re-running eval_vs_truth (full prior) for direct before/after comparison"
 python evaluate_halo_mass_model.py \
     --model-dir $OUT \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --n-examples 500 \
-    --output $OUT/eval_vs_truth_v8.pdf
+    --output $OUT/eval_vs_truth_v9.pdf
+
+echo "======================================================"
+echo ">>> Re-running eval_vs_truth (UVLF-consistent theta only, <=5 sigma) -- the actual test"
+python plot_eval_vs_truth_uvlf_consistent.py \
+    --model-dir $OUT \
+    --database-dir $DB1 $DB2 $DB3 $DB4 \
+    --n-examples 500 --max-sigma 5.0 \
+    --output $OUT/eval_vs_truth_uvlf5sigma_v9.pdf
 
 echo "======================================================"
 echo "Finished: $(date)"
