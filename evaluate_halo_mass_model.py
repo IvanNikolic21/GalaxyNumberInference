@@ -27,8 +27,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from train_nre import env_to_array, normalize_params
-from train_halo_mass import HaloMassNetwork
+from train_nre import env_to_array, normalize_params, N_PARAMS
+from train_halo_mass import HaloMassNetwork, HaloMassSetNetwork
 
 
 def parse_args():
@@ -55,8 +55,19 @@ def main():
     input_dim    = int(config['input_dim'])
     only_angular = bool(int(config['only_angular']))
     summary_mode = bool(int(config['summary_mode'])) if 'summary_mode' in config else False
+    # 'architecture' is absent from checkpoints trained before the Deep Sets
+    # addition -- those are all --architecture mlp, so default to that
+    # rather than erroring on an older model_config.npz.
+    architecture = str(config['architecture']) if 'architecture' in config else "mlp"
 
-    model = HaloMassNetwork(input_dim, hidden_dims, dropout)
+    if architecture == "deepset":
+        phi_dims      = list(config['phi_dims'])
+        pooling       = str(config['pooling'])
+        max_neighbors = int(config['max_neighbors'])
+        n_feat        = (input_dim - 1 - N_PARAMS) // max_neighbors  # -1 for n_norm, -N_PARAMS for theta
+        model = HaloMassSetNetwork(max_neighbors, n_feat, phi_dims, hidden_dims, dropout, pooling=pooling)
+    else:
+        model = HaloMassNetwork(input_dim, hidden_dims, dropout)
     model.load_state_dict(torch.load(args.model_dir / "halo_mass_best.pt", map_location="cpu"))
     model.eval()
 

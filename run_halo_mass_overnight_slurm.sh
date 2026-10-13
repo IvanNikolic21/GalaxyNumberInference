@@ -16,43 +16,39 @@
 ##SBATCH --account=your_account
 
 # =============================================================================
-# Overnight halo-mass model retrain -- v7.
+# Overnight halo-mass model retrain -- v8.
 #
-# v5 introduced beta-NLL (Seitzer et al. 2022, https://arxiv.org/abs/2203.09168)
-# to fix the sigma-collapse that plagued v2/v4 under plain NLL -- this WORKED
-# (mean predicted sigma 20.09 -> 0.369, 69.2% empirical coverage vs a 68%
-# target) but ran the full 300 epochs with no early stopping and badly
-# overfit past epoch ~100 (val loss 0.33 -> 11.06 by epoch 300).
+# v5-v7 were all about the LOSS/TRAINING LOOP: beta-NLL fixed the sigma
+# collapse (Seitzer et al. 2022, https://arxiv.org/abs/2203.09168), then
+# early stopping (with a warmup to survive the post-collapse val-loss spike)
+# fixed the overfitting waste. v7 is the first genuinely trustworthy run --
+# mean predicted sigma 0.379, 73.0% coverage (target 68%), stopped cleanly
+# at epoch 100 (best val 0.3328). But its RMS error (0.361 dex) and the
+# per-bin bias table are essentially IDENTICAL to v1's, all the way back to
+# before any of these fixes: the low-mass tail still over-predicts
+# (bias=+0.337), the high-mass tail still under-predicts (bias=-0.218) --
+# the same shrinkage-to-the-mean S-shape every version has shown. Expected:
+# none of v2-v7's fixes ever touched HaloMassNetwork's actual environment
+# ENCODING, only the loss function and training loop around it.
 #
-# v6 added --early-stop-patience 30 to fix THAT -- but immediately hit a
-# sharper bug: it stopped at epoch 41 with "best val" still 3.9191, the
-# exact plain-NLL collapse floor. beta-NLL training was actually working
-# fine underneath (train loss kept dropping normally), but escaping that
-# early high-sigma regime causes a TEMPORARY SPIKE in val_loss (deliberately
-# measured as plain NLL, beta=0, for comparability across --beta-nll
-# settings) as mu starts moving before sigma re-calibrates -- v5 shows the
-# same spike at epoch 50 (val=25.88) before recovering to val=0.53 by epoch
-# 100. Patience alone can't tell "still stuck" apart from "mid-recovery
-# from a known transient," so it fired right as real learning started and
-# saved the single worst checkpoint in the run.
-#
-# v7's fix: --early-stop-warmup 70 -- the patience counter doesn't start
-# ticking until after this many epochs (best_val/checkpointing still run
-# every epoch regardless, so there's always a saved model). Verified by
-# simulation against v5's actual trajectory: this correctly finds the real
-# best epoch (~100) and stops at ~130, surviving the spike instead of being
-# fooled by it.
-#
-# NOTE: the underlying mu shrinkage-to-the-mean pattern (the S-shape in
-# eval_vs_truth.pdf) is NOT expected to change much here -- neither LDS,
-# beta-NLL, nor early stopping target mu's point-estimate accuracy directly.
-# That's the architecture question (Deep Sets / Set Transformer) still on
-# the table for next.
+# v8 is the first architecture change: --architecture deepset (Zaheer et
+# al. 2017, https://arxiv.org/abs/1703.06114, module docstring in
+# train_halo_mass.py -- new HaloMassSetNetwork class). HaloMassNetwork
+# flattens the distance-sorted, zero-padded neighbor list into one vector
+# and feeds it to a plain MLP, which has to rediscover permutation-
+# invariance from scratch; HaloMassSetNetwork applies a small shared MLP to
+# EACH neighbor row independently (--phi-dims), masks out padding rows, and
+# sum-pools (--pooling) into one fixed-size embedding before the same
+# ResidualBlock stack as before. Permutation-invariant by construction --
+# this is the first change actually aimed at the persistent S-shape rather
+# than at training stability. Everything else (LDS, beta-NLL, warmup-
+# protected early stopping) is kept identical to v7 for a clean comparison.
 #
 # Re-evaluates against eval_vs_truth.pdf's own script at the end so the
-# before/after comparison is a straight diff across all seven PDFs (v1
+# before/after comparison is a straight diff across all eight PDFs (v1
 # unweighted, v2 collapsed, v3 clipped-raw-reweight, v4 LDS-still-collapsed,
-# v5 LDS+beta-NLL-overfit, v6 early-stop-fooled-by-spike, v7 warmup-fixed).
+# v5 LDS+beta-NLL-overfit, v6 early-stop-fooled-by-spike, v7 warmup-fixed-
+# MLP, v8 warmup-fixed-DeepSets).
 # =============================================================================
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
@@ -78,9 +74,9 @@ DB1=$NEIGHBORS/nre_database_prior_capped_seed1955
 DB2=$NEIGHBORS/nre_database_prior_capped_seed2027
 DB3=$NEIGHBORS/nre_database_prior_capped_seed3142
 DB4=$NEIGHBORS/nre_database_prior_capped_seed4242
-OUT=$NEIGHBORS/halo_mass_model_multibox4_v7
+OUT=$NEIGHBORS/halo_mass_model_multibox4_v8
 
-echo ">>> Training halo-mass model v7 (LDS reweighting + beta-NLL + warmup-protected early stopping)"
+echo ">>> Training halo-mass model v8 (Deep Sets architecture + LDS + beta-NLL + early stopping)"
 python train_halo_mass.py \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --only-angular --epochs 300 --max-per-catalog 0 --weight-by-catalog-count \
@@ -89,6 +85,7 @@ python train_halo_mass.py \
     --max-weight-ratio 10.0 --grad-clip 5.0 \
     --early-stop-patience 30 --early-stop-warmup 70 \
     --diag-every 10 --diag-bins 8 \
+    --architecture deepset --phi-dims 64 64 --pooling sum \
     --hidden-dims 512 512 512 512 512 512 \
     --batch-size 1024 \
     --output-dir $OUT
@@ -99,7 +96,7 @@ python evaluate_halo_mass_model.py \
     --model-dir $OUT \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --n-examples 500 \
-    --output $OUT/eval_vs_truth_v7.pdf
+    --output $OUT/eval_vs_truth_v8.pdf
 
 echo "======================================================"
 echo "Finished: $(date)"

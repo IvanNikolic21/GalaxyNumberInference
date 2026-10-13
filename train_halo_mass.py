@@ -75,6 +75,26 @@ Model and training choices, in one place for reference
   way left to reduce the loss -- a runaway feedback loop. Fix: scale each
   example's NLL by sigma.detach()**(2*beta) (--beta-nll, default 0.5) --
   see gaussian_nll() below for the full mechanism.
+- Deep Sets (--architecture deepset): Zaheer, Kottur, Ravanbakhsh, Poczos,
+  Salakhutdinov & Smola (2017), "Deep Sets," https://arxiv.org/abs/1703.06114
+  (NeurIPS). HaloMassNetwork flattens the distance-sorted, zero-padded
+  neighbor list into ONE vector and feeds it to a plain MLP -- the network
+  has to rediscover permutation-invariance from scratch (two environments
+  that differ only in which of two nearly-equidistant neighbors sorted
+  first look like completely different inputs to an MLP's first layer),
+  and the v1-v7 runs' persistent shrinkage-to-the-mean bias never moved
+  under any loss-function fix (LDS, beta-NLL, early stopping) -- all of
+  which left this encoding untouched. HaloMassSetNetwork instead applies a
+  small shared MLP (phi) to EACH neighbor row independently (so neighbor
+  order literally cannot matter), masks out the padding rows, and SUM-pools
+  the per-neighbor embeddings into one fixed-size vector before the same
+  ResidualBlock stack (rho) as before -- see HaloMassSetNetwork below. This
+  implements the paper's basic phi/sum-pool/rho architecture, not the
+  attention-based Set Transformer (Lee et al. 2019, arXiv:1810.00825, also
+  on the reading list) some neighbor-set problems need -- worth trying next
+  if plain sum-pooling isn't enough, since attention can weight closer/
+  brighter neighbors differently instead of treating the pooling sum as a
+  single undifferentiated whole.
 
 Usage
 -----
@@ -153,9 +173,17 @@ from torch.utils.data import Dataset, DataLoader
 #                         (dx, dy, dz, MUV). Used below only to reshape the
 #                         flat augmentation-target array back into its
 #                         (MAX_NEIGHBORS, N_FEATURES_FULL) layout.
+#   N_FEATURES_SUMM, N_FEATURES_ANG -- same idea for --summary-mode (2:
+#                         distance, MUV) and --only-angular (3: dx, dy, MUV)
+#                         -- only needed by _n_features() below, for
+#                         HaloMassSetNetwork to know how to reshape the flat
+#                         input back into (MAX_NEIGHBORS, n_feat) rows.
+#   N_PARAMS          -- length of theta = (Muv_add, sigmaUV_a, sigmaUV_b): 3.
+#                         Only needed by HaloMassSetNetwork, to know where
+#                         theta starts in the flat input vector.
 from train_nre import (
     env_to_array, normalize_params, ResidualBlock,
-    MAX_NEIGHBORS, N_FEATURES_FULL,
+    MAX_NEIGHBORS, N_FEATURES_FULL, N_FEATURES_SUMM, N_FEATURES_ANG, N_PARAMS,
 )
 
 # Configure the module-level logger used by every log.info(...) call below:
@@ -579,6 +607,120 @@ class HaloMassNetwork(nn.Module):
         return mu, log_sigma
 
 
+def _n_features(only_angular: bool, summary_mode: bool) -> int:
+    """Per-neighbor feature count for the CURRENT encoding flags -- mirrors
+    env_to_array's own branching in train_nre.py exactly (summary_mode takes
+    priority over only_angular there, so it does here too), so
+    HaloMassSetNetwork always reshapes the flat input back into the same
+    (MAX_NEIGHBORS, n_feat) layout env_to_array actually produced it in.
+    """
+    if summary_mode:
+        return N_FEATURES_SUMM
+    if only_angular:
+        return N_FEATURES_ANG
+    return N_FEATURES_FULL
+
+
+# ---------------------------------------------------------------------------
+# Model (Deep Sets variant) -- Zaheer et al. (2017), module docstring above.
+# Same flat (neighbors, n_norm, theta) input as HaloMassNetwork (so the
+# Dataset/DataLoader/CLI data-loading code above needs ZERO changes), but
+# reshapes the neighbor block back into (MAX_NEIGHBORS, n_feat) rows and
+# processes it as a genuine SET instead of one flattened MLP input.
+# ---------------------------------------------------------------------------
+
+class HaloMassSetNetwork(nn.Module):
+    def __init__(self, max_neighbors: int, n_feat: int, phi_dims: list = [64, 64],
+                 rho_hidden_dims: list = [256, 256, 256, 256], dropout: float = 0.1,
+                 pooling: str = "sum"):
+        super().__init__()
+        self.max_neighbors = max_neighbors
+        self.n_feat        = n_feat
+        self.pooling       = pooling
+
+        # phi: a small MLP applied INDEPENDENTLY and IDENTICALLY to every
+        # neighbor row (nn.Linear/nn.LayerNorm broadcast over any number of
+        # leading batch dims, so applying this Sequential to a
+        # (batch, max_neighbors, n_feat) tensor runs the SAME weights on
+        # every one of the max_neighbors rows -- this is what makes the
+        # encoding permutation-invariant: swapping two neighbors' rows just
+        # swaps which row gets which (identical) embedding, which sum-
+        # pooling below doesn't even notice).
+        phi_layers = []
+        in_d = n_feat
+        for d in phi_dims:
+            phi_layers += [nn.Linear(in_d, d), nn.LayerNorm(d), nn.GELU()]
+            in_d = d
+        self.phi = nn.Sequential(*phi_layers)
+        embed_dim = phi_dims[-1]
+
+        # rho: identical ResidualBlock backbone to HaloMassNetwork, just
+        # operating on [pooled_embedding, n_norm, theta] (width
+        # embed_dim + 1 + N_PARAMS) instead of the old flattened
+        # (MAX_NEIGHBORS*n_feat + 1 + N_PARAMS)-wide vector.
+        rho_input_dim = embed_dim + 1 + N_PARAMS
+        self.input_proj = nn.Sequential(
+            nn.Linear(rho_input_dim, rho_hidden_dims[0]),
+            nn.LayerNorm(rho_hidden_dims[0]),
+            nn.GELU(),
+        )
+        blocks = []
+        for i in range(len(rho_hidden_dims)):
+            in_d2  = rho_hidden_dims[i]
+            out_d2 = rho_hidden_dims[i + 1] if i + 1 < len(rho_hidden_dims) else rho_hidden_dims[i]
+            if in_d2 == out_d2:
+                blocks.append(ResidualBlock(in_d2, dropout))
+            else:
+                blocks.append(nn.Sequential(
+                    nn.Linear(in_d2, out_d2), nn.LayerNorm(out_d2), nn.GELU(), nn.Dropout(dropout),
+                ))
+        self.blocks = nn.ModuleList(blocks)
+        self.output = nn.Linear(rho_hidden_dims[-1], 2)  # (mu, pre-sigmoid log_sigma), same head as HaloMassNetwork
+        with torch.no_grad():
+            self.output.bias[1] = 0.0  # same sane sigma=1 start as HaloMassNetwork, see its comment
+
+    def forward(self, x):
+        n_flat = self.max_neighbors * self.n_feat
+        # Undo __getitem__'s flattening: x is [flat_neighbors, n_norm, theta]
+        # concatenated into one vector (see HaloMassDataset.__getitem__) --
+        # slice it back into its three original pieces by position.
+        neighbor_flat = x[:, :n_flat]
+        n_norm        = x[:, n_flat:n_flat + 1]
+        theta         = x[:, n_flat + 1:]
+        neighbors = neighbor_flat.view(-1, self.max_neighbors, self.n_feat)
+
+        # A padding row is one env_to_array left all-zero (every real row
+        # has at least a nonzero MUV -- these are magnitudes, never
+        # literally 0 in this dataset -- so "all features exactly zero" is
+        # an unambiguous padding marker, not a real neighbor coincidentally
+        # landing on zero). This needs no information beyond x itself --
+        # no Dataset/collate change, no separate mask tensor to plumb through.
+        mask = (neighbors.abs().sum(dim=-1, keepdim=True) > 0).float()  # (batch, max_neighbors, 1)
+
+        embeddings = self.phi(neighbors) * mask  # zero out whatever phi(0) produces for padding rows
+        if self.pooling == "mean":
+            # Mean over REAL neighbors only (mask.sum == true neighbor count,
+            # clamped to >=1 defensively -- HaloMassDataset already drops
+            # any environment with zero real neighbors, so this never
+            # actually divides by zero in practice).
+            pooled = embeddings.sum(dim=1) / mask.sum(dim=1).clamp(min=1.0)
+        else:
+            # Sum pooling (Deep Sets' original formulation, module
+            # docstring above) -- unlike mean, this lets the pooled vector's
+            # MAGNITUDE itself encode how many neighbors there are, which is
+            # otherwise only available through the separate n_norm feature.
+            pooled = embeddings.sum(dim=1)
+
+        combined = torch.cat([pooled, n_norm, theta], dim=-1)
+        h = self.input_proj(combined)
+        for block in self.blocks:
+            h = block(h)
+        out = self.output(h)
+        mu = out[:, 0]
+        log_sigma = -3.0 + 6.0 * torch.sigmoid(out[:, 1])  # same smooth bound as HaloMassNetwork, see its comment
+        return mu, log_sigma
+
+
 def gaussian_nll(mu, log_sigma, target, weight, beta=0.0):
     # Negative log-likelihood of `target` under a Normal(mu, sigma^2), per
     # example, then combined into one WEIGHTED MEAN loss across the batch.
@@ -770,8 +912,25 @@ def parse_args():
     # One width per residual stage; e.g. the default [256,256,256,256] gives
     # a 4-block network at constant width 256. Passing e.g.
     # "512 512 512 512 512 512" builds a wider (512) AND deeper (6-block) network.
-    p.add_argument("--hidden-dims", type=int, nargs='+', default=[256, 256, 256, 256])
+    p.add_argument("--hidden-dims", type=int, nargs='+', default=[256, 256, 256, 256],
+                   help="Residual-stack widths for rho (the post-pooling backbone in "
+                        "--architecture deepset, or the whole network in --architecture mlp).")
     p.add_argument("--dropout", type=float, default=0.1)
+    p.add_argument("--architecture", choices=["mlp", "deepset"], default="mlp",
+                   help="'mlp' (default, unchanged from v1-v7): flatten the distance-sorted, "
+                        "zero-padded neighbor list into one vector, feed it straight to the "
+                        "ResidualBlock stack. 'deepset': Zaheer et al. 2017 (module docstring) -- "
+                        "a shared per-neighbor MLP (--phi-dims) + masked --pooling into one "
+                        "fixed-size embedding, THEN the same ResidualBlock stack. Permutation-"
+                        "invariant by construction; targets the shrinkage-to-the-mean bias that "
+                        "no loss-function fix (LDS, beta-NLL, early stopping) has moved.")
+    p.add_argument("--phi-dims", type=int, nargs='+', default=[64, 64],
+                   help="--architecture deepset only: widths of the shared per-neighbor "
+                        "embedding MLP (phi). Last value is the pooled embedding's dimension.")
+    p.add_argument("--pooling", choices=["sum", "mean"], default="sum",
+                   help="--architecture deepset only: how per-neighbor embeddings are combined. "
+                        "'sum' (Deep Sets' original formulation) lets the pooled vector's "
+                        "magnitude itself encode neighbor count; 'mean' normalizes that out.")
     # Per-catalog environment subsampling cap -- see the --max-per-catalog
     # use inside HaloMassDataset.__init__ above. 0 (or any non-positive
     # value) disables the cap, using every environment in every catalog.
@@ -920,7 +1079,15 @@ def main():
     input_dim = sample_x.shape[0]
     log.info(f"Input dim: {input_dim}")
 
-    model = HaloMassNetwork(input_dim, args.hidden_dims, args.dropout).to(device)
+    if args.architecture == "deepset":
+        n_feat = _n_features(args.only_angular, args.summary_mode)
+        model = HaloMassSetNetwork(MAX_NEIGHBORS, n_feat, args.phi_dims, args.hidden_dims,
+                                    args.dropout, pooling=args.pooling).to(device)
+        log.info(f"Architecture: deepset  (n_feat={n_feat}, phi_dims={args.phi_dims}, "
+                  f"pooling={args.pooling})")
+    else:
+        model = HaloMassNetwork(input_dim, args.hidden_dims, args.dropout).to(device)
+        log.info("Architecture: mlp")
     n_params = sum(p.numel() for p in model.parameters())
     log.info(f"Model parameters: {n_params:,}")
 
@@ -1013,12 +1180,21 @@ def main():
     #                         time inputs get normalized identically to
     #                         training-time inputs.
     torch.save(model.state_dict(), args.output_dir / "halo_mass_final.pt")
+    # architecture/phi_dims/pooling are saved unconditionally (even for the
+    # default --architecture mlp, where they're unused) so
+    # evaluate_halo_mass_model.py has one uniform loading path instead of
+    # needing to guess an older checkpoint's architecture from which fields
+    # happen to be present.
     np.savez(args.output_dir / "model_config.npz",
              hidden_dims=np.array(args.hidden_dims),
              dropout=args.dropout,
              input_dim=input_dim,
              only_angular=int(args.only_angular),
-             summary_mode=int(args.summary_mode))
+             summary_mode=int(args.summary_mode),
+             architecture=args.architecture,
+             phi_dims=np.array(args.phi_dims),
+             pooling=args.pooling,
+             max_neighbors=MAX_NEIGHBORS)
     np.savez(args.output_dir / "normalization.npz", param_min=param_min, param_max=param_max)
     log.info(f"Training {'stopped early' if stopped_early else 'complete'}. Best val loss: {best_val:.4f}")
     log.info(f"Model saved to: {args.output_dir}")
