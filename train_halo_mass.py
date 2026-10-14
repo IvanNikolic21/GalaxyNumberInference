@@ -399,64 +399,21 @@ class HaloMassDataset(Dataset):
 
         log.info(f"Total (environment, log Mh) pairs: {len(self.envs)}")
 
-        if reweight_by_mass and len(self.logmh) > 0:
-            # Label-Distribution-Smoothing (LDS) inverse-density reweighting
-            # -- see Yang et al. (2021) in the module docstring above. The
-            # predicted-vs-true plot showed shrinkage-to-the-mean worst in
-            # the sparsest true-logMh regions (both tails), because the
-            # dense middle band dominates the loss; the fix is to give each
-            # example a weight ~ 1/density(bin)^alpha. v3 computed
-            # "density" as the bin's OWN raw count, which is a noisy
-            # estimate for a sparsely-populated bin and produced individual
-            # weight ratios >100x, destabilizing training (the sigma-
-            # collapse bug --max-weight-ratio/--grad-clip were added to
-            # patch over). v4 instead smooths the count histogram across
-            # neighboring bins first (_smooth_bin_counts), which is the
-            # actual LDS mechanism from the paper -- a less noisy, more
-            # stable density estimate, so the resulting weights shouldn't
-            # need nearly as aggressive clipping downstream.
-            logmh_arr = np.array(self.logmh)
-            # reweight_bins equal-width bins spanning the full observed
-            # log(Mh) range; +1e-6 on the upper edge so the single highest-
-            # mass example (which would otherwise sit exactly ON the last
-            # edge) is included in the last bin rather than falling outside
-            # all bins (np.digitize's right-open-interval convention).
-            edges = np.linspace(logmh_arr.min(), logmh_arr.max() + 1e-6, reweight_bins + 1)
-            # np.digitize returns 1-indexed bin numbers (0 means "below the
-            # first edge"); the -1 converts to 0-indexed, and the outer clip
-            # is a defensive guard against any example landing in bin -1 or
-            # reweight_bins due to floating-point edge effects.
-            bin_idx = np.clip(np.digitize(logmh_arr, edges) - 1, 0, reweight_bins - 1)
-            # Raw per-bin example counts, THEN kernel-smoothed across
-            # neighboring bins -- the LDS step. With lds_kernel_sigma=0 this
-            # is a no-op (smoothed_counts == raw counts), i.e. the old v3
-            # behavior, for direct comparison.
-            counts = np.bincount(bin_idx, minlength=reweight_bins)
-            smoothed_counts = _smooth_bin_counts(counts, lds_kernel_sigma)
-            # Per-example weight ~ 1 / (that example's SMOOTHED bin density)^alpha.
-            # alpha=1 would fully flatten the mass distribution's
-            # contribution to the loss (every bin contributes equally);
-            # alpha=0 disables this term entirely (weight=1 for everyone);
-            # the default 0.5 is a softened compromise between the two.
-            # smoothed_counts[bin_idx] maps each example back to ITS bin's
-            # smoothed density via fancy indexing; np.maximum(..., eps)
-            # guards against a near-zero smoothed value at the extreme
-            # edges of the range (possible, unlike with raw counts, since
-            # smoothing can push a low-count edge bin's value arbitrarily
-            # close to zero rather than floor at the bin's own count of >=1).
-            mass_weight = 1.0 / np.maximum(smoothed_counts[bin_idx], 1e-6) ** reweight_alpha
-            # Renormalize so the mean weight is exactly 1 -- keeps the
-            # overall magnitude of gaussian_nll's weighted average (see
-            # gaussian_nll() below) from drifting as reweight_alpha/
-            # reweight_bins/lds_kernel_sigma change, which would otherwise
-            # also silently change the effective learning rate.
-            mass_weight = mass_weight / mass_weight.mean()
-            self.weights = (np.array(self.weights) * mass_weight).tolist()
-            log.info(f"Applied LDS mass reweighting (bins={reweight_bins}, "
-                      f"alpha={reweight_alpha}, kernel_sigma={lds_kernel_sigma} bins); "
-                      f"raw counts range [{counts.min()}, {counts.max()}], "
-                      f"smoothed range [{smoothed_counts.min():.1f}, {smoothed_counts.max():.1f}]")
-
+        # UVLF-plausibility weight is computed FIRST (but not yet applied to
+        # self.weights) when both --reweight-by-mass and --uvlf-reweight are
+        # on, so LDS's density estimate below can be CONDITIONED on it --
+        # see the long comment in the uvlf_reweight block for why computing
+        # LDS against the raw, UVLF-dominated-by-implausible-theta
+        # population was found to be a composition bug, not evidence the
+        # architecture needed more work (diagnose_effective_mass_
+        # distribution.py: within the UVLF-consistent subset, the max/min
+        # bin fraction ratio was still 153x after v9's independently-
+        # computed LDS x UVLF weighting, because LDS's "rare bin" boost was
+        # computed against the GLOBAL histogram, where low mass looks DENSE
+        # -- flooded by implausible theta that can scatter low-mass halos
+        # bright -- while it's actually the rarest mass range among
+        # UVLF-plausible theta specifically).
+        uvlf_weight = None
         if uvlf_reweight and len(self.params) > 0:
             # UVLF-plausibility reweighting. Motivated by
             # diagnose_uvlf_stratified_neighbor_count.py: the UNIFORM theta
@@ -544,7 +501,11 @@ class HaloMassDataset(Dataset):
             sigmas = np.array([_uvlf_sigma(p_[0], p_[1], p_[2]) for p_ in self.params])
             uvlf_weight = np.exp(-0.5 * (sigmas / uvlf_sigma_scale) ** 2)
             uvlf_weight = uvlf_weight / uvlf_weight.mean()
-            self.weights = (np.array(self.weights) * uvlf_weight).tolist()
+            # NOT applied to self.weights here -- deferred until after the
+            # reweight_by_mass block below, which uses uvlf_weight (if
+            # computed) as the REFERENCE population for its own density
+            # estimate, then applies both factors together in one place.
+            #
             # Effective sample size (standard importance-weighting
             # diagnostic: ESS = (sum w)^2 / sum(w^2), equal to len(weights)
             # if all weights are equal and shrinking toward 0 as the weight
@@ -554,12 +515,100 @@ class HaloMassDataset(Dataset):
             # of examples; this makes that concentration visible instead of
             # a hidden side effect of the reweighting.
             ess = float(uvlf_weight.sum() ** 2 / (uvlf_weight ** 2).sum())
-            log.info(f"Applied UVLF-plausibility reweighting (sigma_scale={uvlf_sigma_scale}, "
+            log.info(f"Computed UVLF-plausibility weight (sigma_scale={uvlf_sigma_scale}, "
                       f"{len(sigma_cache)} distinct theta); sigma range "
                       f"[{sigmas.min():.1f}, {sigmas.max():.1f}], "
                       f"weight range [{uvlf_weight.min():.2e}, {uvlf_weight.max():.2e}], "
                       f"effective sample size {ess:.0f}/{len(uvlf_weight)} "
                       f"({ess/len(uvlf_weight):.1%})")
+
+        if reweight_by_mass and len(self.logmh) > 0:
+            # Label-Distribution-Smoothing (LDS) inverse-density reweighting
+            # -- see Yang et al. (2021) in the module docstring above. The
+            # predicted-vs-true plot showed shrinkage-to-the-mean worst in
+            # the sparsest true-logMh regions (both tails), because the
+            # dense middle band dominates the loss; the fix is to give each
+            # example a weight ~ 1/density(bin)^alpha. v3 computed
+            # "density" as the bin's OWN raw count, which is a noisy
+            # estimate for a sparsely-populated bin and produced individual
+            # weight ratios >100x, destabilizing training (the sigma-
+            # collapse bug --max-weight-ratio/--grad-clip were added to
+            # patch over). v4 instead smooths the count histogram across
+            # neighboring bins first (_smooth_bin_counts), which is the
+            # actual LDS mechanism from the paper -- a less noisy, more
+            # stable density estimate, so the resulting weights shouldn't
+            # need nearly as aggressive clipping downstream.
+            #
+            # v9 computed this "density" over the RAW, unweighted example
+            # counts even when --uvlf-reweight was also on -- found (via
+            # diagnose_effective_mass_distribution.py) to be a composition
+            # bug: globally, low true-logMh looks DENSE (flooded by
+            # UVLF-implausible theta that can scatter low-mass halos
+            # bright), so LDS boosted HIGH mass (globally sparse) instead
+            # of the mass range that's actually rare among UVLF-PLAUSIBLE
+            # theta specifically -- within the UVLF-consistent subset, the
+            # max/min bin fraction ratio was still 153x after v9's
+            # independently-computed LDS x UVLF weighting. Fix: when
+            # uvlf_weight was computed above, use it as the REFERENCE
+            # weighting for this density estimate (np.bincount's `weights`
+            # argument) instead of a plain unweighted count -- so "sparse"
+            # now means "sparse among UVLF-plausible theta," not "sparse
+            # globally." With --uvlf-reweight off, uvlf_weight is None and
+            # this is an unweighted bincount exactly as before (v4-v9's
+            # behavior unchanged in that case).
+            logmh_arr = np.array(self.logmh)
+            density_ref = uvlf_weight  # None (unweighted) unless --uvlf-reweight computed one above
+            # reweight_bins equal-width bins spanning the full observed
+            # log(Mh) range; +1e-6 on the upper edge so the single highest-
+            # mass example (which would otherwise sit exactly ON the last
+            # edge) is included in the last bin rather than falling outside
+            # all bins (np.digitize's right-open-interval convention).
+            edges = np.linspace(logmh_arr.min(), logmh_arr.max() + 1e-6, reweight_bins + 1)
+            # np.digitize returns 1-indexed bin numbers (0 means "below the
+            # first edge"); the -1 converts to 0-indexed, and the outer clip
+            # is a defensive guard against any example landing in bin -1 or
+            # reweight_bins due to floating-point edge effects.
+            bin_idx = np.clip(np.digitize(logmh_arr, edges) - 1, 0, reweight_bins - 1)
+            # Per-bin example counts (weighted by UVLF-plausibility if that
+            # was computed above, else a plain count), THEN kernel-smoothed
+            # across neighboring bins -- the LDS step. With lds_kernel_sigma=0
+            # this is a no-op (smoothed_counts == raw counts), i.e. the old
+            # v3 behavior, for direct comparison.
+            counts = np.bincount(bin_idx, weights=density_ref, minlength=reweight_bins)
+            smoothed_counts = _smooth_bin_counts(counts, lds_kernel_sigma)
+            # Per-example weight ~ 1 / (that example's SMOOTHED bin density)^alpha.
+            # alpha=1 would fully flatten the mass distribution's
+            # contribution to the loss (every bin contributes equally);
+            # alpha=0 disables this term entirely (weight=1 for everyone);
+            # the default 0.5 is a softened compromise between the two.
+            # smoothed_counts[bin_idx] maps each example back to ITS bin's
+            # smoothed density via fancy indexing; np.maximum(..., eps)
+            # guards against a near-zero smoothed value at the extreme
+            # edges of the range (possible, unlike with raw counts, since
+            # smoothing can push a low-count edge bin's value arbitrarily
+            # close to zero rather than floor at the bin's own count of >=1).
+            mass_weight = 1.0 / np.maximum(smoothed_counts[bin_idx], 1e-6) ** reweight_alpha
+            # Renormalize so the mean weight is exactly 1 -- keeps the
+            # overall magnitude of gaussian_nll's weighted average (see
+            # gaussian_nll() below) from drifting as reweight_alpha/
+            # reweight_bins/lds_kernel_sigma change, which would otherwise
+            # also silently change the effective learning rate.
+            mass_weight = mass_weight / mass_weight.mean()
+            self.weights = (np.array(self.weights) * mass_weight).tolist()
+            log.info(f"Applied LDS mass reweighting (bins={reweight_bins}, "
+                      f"alpha={reweight_alpha}, kernel_sigma={lds_kernel_sigma} bins, "
+                      f"density conditioned on UVLF weight: {uvlf_reweight}); "
+                      f"raw counts range [{counts.min():.1f}, {counts.max():.1f}], "
+                      f"smoothed range [{smoothed_counts.min():.1f}, {smoothed_counts.max():.1f}]")
+
+        if uvlf_weight is not None:
+            # Apply the UVLF-plausibility factor itself (deferred from the
+            # block above, where only its VALUE was computed and used as
+            # LDS's reference population) -- this still down-weights
+            # individual implausible-theta examples WITHIN a bin, which the
+            # (bin-level, aggregate) mass_weight above cannot do on its own.
+            self.weights = (np.array(self.weights) * uvlf_weight).tolist()
+            log.info("Applied UVLF-plausibility weight to the combined example weights.")
 
         if max_weight_ratio is not None and max_weight_ratio > 0 and len(self.weights) > 0:
             # The v2 overnight run showed train/val loss freeze bit-for-bit by
