@@ -16,42 +16,47 @@
 ##SBATCH --account=your_account
 
 # =============================================================================
-# Overnight halo-mass model retrain -- v9.
+# Overnight halo-mass model retrain -- v10.
 #
-# v8 added the first architecture change (Deep Sets, --architecture
-# deepset) to target the persistent shrinkage-to-the-mean S-shape that
-# survived every v2-v7 loss/training-loop fix -- but v8's RMS (0.361 dex)
-# and tail bias were essentially IDENTICAL to v7's plain MLP. That led to
-# checking the TRAINING PRIOR itself rather than the model:
-# diagnose_uvlf_stratified_neighbor_count.py found the uniform theta prior
-# this whole database was built from is overwhelmingly UVLF-inconsistent
-# (sampled log-likelihoods from -1.5 to -56,069,751.6 across just 2000
-# theta -- nearly the WHOLE prior is astrophysically impossible), and
-# plot_eval_vs_truth_uvlf_consistent.py confirmed the v8 model STILL shows
-# a residual shrinkage bias even when EVALUATED only on the UVLF-consistent
-# subset (theta within 5 sigma of Donnan+24) -- i.e. the bias partly
-# reflects what the model was TRAINED on (overwhelmingly implausible junk
-# diluting the gradient), not just what it's evaluated on.
+# v9 added --uvlf-reweight to scale each example's training loss by its
+# parent theta's UVLF plausibility -- but Ivan's read of
+# eval_vs_truth_uvlf5sigma_v9.pdf was right: the residual shrinkage bias,
+# WITHIN the UVLF-consistent subset, looked essentially unchanged from v8's.
+# diagnose_effective_mass_distribution.py confirmed it quantitatively: the
+# max/min bin fraction ratio within that subset was still 153x after v9's
+# combined LDS x UVLF weighting (vs 245x raw) -- barely moved, and the
+# weight that DID shift went toward the already-dense HIGH-mass end, not
+# the genuinely sparse low-mass end.
 #
-# v9's fix: --uvlf-reweight (new in train_halo_mass.py) scales each
-# example's training loss by its parent theta's UVLF plausibility, reusing
-# the exact log-likelihood infer_nre.py's --use-uvlf path and
-# check_uvlf_consistency.py already compute, via a smooth Gaussian taper in
-# equivalent-sigma units (--uvlf-sigma-scale, module docstring in
-# train_halo_mass.py for why a raw softmax on the log-L would instead
-# underflow ~the whole dataset to zero weight given this prior's range).
-# Kept the Deep Sets architecture from v8 (not reverting it -- it's a
-# separate, independently-motivated fix that may still matter once the
-# prior itself isn't drowning out the signal). Everything else (LDS,
-# beta-NLL, warmup-protected early stopping) is kept identical to v7/v8 for
-# a clean comparison.
+# Root cause, found by that same diagnostic: --reweight-by-mass (LDS)
+# computed its density estimate over the RAW, unweighted example counts --
+# dominated by the 87% UVLF-implausible majority, where low mass looks
+# DENSE (flooded by implausible theta that can scatter low-mass halos
+# bright). So LDS was boosting whatever's globally sparse (high mass),
+# while UVLF-reweighting independently ALSO favors high mass (same
+# correlation, r=+0.38/rho=+0.78 between UVLF log-L and host mass) --
+# the two factors compounded in the SAME direction instead of LDS
+# targeting what's actually rare among UVLF-plausible theta specifically.
+# This was a composition bug between two reweighting schemes, not evidence
+# the architecture needed more work.
 #
-# Re-evaluates TWICE at the end: the usual full-prior eval_vs_truth.pdf
-# (comparable to every prior version), AND the same UVLF-consistent-only
-# check (plot_eval_vs_truth_uvlf_consistent.py, <=5 sigma, matching the one
-# already run against v8) -- that second one is the actual test of whether
-# this fix worked, since that's exactly the plot that showed the residual
-# bias in the first place.
+# v10's fix (train_halo_mass.py, no new CLI flags -- same v9 command,
+# automatic once both --reweight-by-mass and --uvlf-reweight are on): LDS's
+# density estimate is now computed USING the UVLF weight as the reference
+# population (np.bincount's weights= argument) instead of a plain count --
+# so "sparse" now means "sparse among UVLF-plausible theta," not "sparse
+# globally." Verified by simulation against the real empirical structure
+# before this run: under the old unweighted LDS, the sparsest-looking bin
+# was the HIGHEST mass bin (backwards); under the fixed, UVLF-weighted LDS,
+# it's correctly the LOWEST mass bin among plausible theta.
+#
+# Re-evaluates TWICE at the end, same as v9: the usual full-prior
+# eval_vs_truth.pdf, AND the UVLF-consistent-only check
+# (plot_eval_vs_truth_uvlf_consistent.py, <=5 sigma) -- the second one is
+# the actual test of whether the conditioned-LDS fix worked. Compare its
+# per-bin spread directly against v9's (and run
+# diagnose_effective_mass_distribution.py again against v10's database
+# weighting if the max/min ratio needs rechecking numerically).
 # =============================================================================
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
@@ -77,9 +82,9 @@ DB1=$NEIGHBORS/nre_database_prior_capped_seed1955
 DB2=$NEIGHBORS/nre_database_prior_capped_seed2027
 DB3=$NEIGHBORS/nre_database_prior_capped_seed3142
 DB4=$NEIGHBORS/nre_database_prior_capped_seed4242
-OUT=$NEIGHBORS/halo_mass_model_multibox4_v9
+OUT=$NEIGHBORS/halo_mass_model_multibox4_v10
 
-echo ">>> Training halo-mass model v9 (UVLF-reweighted + Deep Sets + LDS + beta-NLL + early stopping)"
+echo ">>> Training halo-mass model v10 (UVLF-conditioned LDS + Deep Sets + beta-NLL + early stopping)"
 python train_halo_mass.py \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --only-angular --epochs 300 --max-per-catalog 0 --weight-by-catalog-count \
@@ -100,7 +105,7 @@ python evaluate_halo_mass_model.py \
     --model-dir $OUT \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --n-examples 500 \
-    --output $OUT/eval_vs_truth_v9.pdf
+    --output $OUT/eval_vs_truth_v10.pdf
 
 echo "======================================================"
 echo ">>> Re-running eval_vs_truth (UVLF-consistent theta only, <=5 sigma) -- the actual test"
@@ -108,7 +113,7 @@ python plot_eval_vs_truth_uvlf_consistent.py \
     --model-dir $OUT \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --n-examples 500 --max-sigma 5.0 \
-    --output $OUT/eval_vs_truth_uvlf5sigma_v9.pdf
+    --output $OUT/eval_vs_truth_uvlf5sigma_v10.pdf
 
 echo "======================================================"
 echo "Finished: $(date)"
