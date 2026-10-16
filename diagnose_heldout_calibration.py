@@ -32,11 +32,16 @@ points are training examples):
      bin. A well-trained posterior mean lies on y = x here.
   2. PIT (probability integral transform; Dawid 1984, J. R. Stat. Soc. A
      147, 278; Gneiting, Balabdaoui & Raftery 2007, J. R. Stat. Soc. B 69,
-     243): u = Phi((true - mu) / sigma). If the predicted Gaussian is the
-     true conditional distribution, u ~ Uniform(0, 1). A hump means sigma
+     243): u = F(true), the model's predicted CDF evaluated at the truth --
+     Phi((true - mu) / sigma) for a single Gaussian, sum_k pi_k
+     Phi((true - mu_k) / sigma_k) for a mixture (--n-components > 1). If
+     the predicted distribution is the true conditional one, u ~ U(0, 1). A hump means sigma
      is too large, a U shape means it is too small, a slope means mu is
-     biased. Plus the coverage curve (fraction of true values inside the
-     central q-interval vs q), the cumulative version of the same test --
+     biased. Plus the coverage curves -- central (fraction of true values
+     inside the central q-interval, |u - 0.5| < q/2) and one-sided (u < q)
+     vs q -- the cumulative version of the same test. The central curve
+     alone is blind to SKEW (an excess in one tail cancels a deficit in the
+     other, as happened for v10), which the one-sided curve catches --
      the regression analogue of the SBC rank checks used for the NRE
      (Talts et al. 2018, arXiv:1804.06788).
 
@@ -90,7 +95,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from train_halo_mass import HaloMassDataset, HaloMassNetwork, HaloMassSetNetwork, _n_features
+from train_halo_mass import (HaloMassDataset, load_halo_mass_model, mixture_outputs,
+                             mixture_mean_std, mixture_cdf)
 from uvlf import Mason15, Observations
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -129,27 +135,6 @@ def parse_args():
     p.add_argument("--n-bins", type=int, default=12, help="Bins in predicted mu for the reverse-binning panel.")
     p.add_argument("--batch-size", type=int, default=4096)
     return p.parse_args()
-
-
-def load_model(model_dir: Path):
-    # Same loading path as plot_eval_vs_truth_uvlf_consistent.py: rebuild the
-    # architecture from model_config.npz, then load the best-val checkpoint.
-    config = np.load(model_dir / "model_config.npz")
-    hidden_dims  = list(config['hidden_dims'])
-    dropout      = float(config['dropout'])
-    input_dim    = int(config['input_dim'])
-    only_angular = bool(int(config['only_angular']))
-    summary_mode = bool(int(config['summary_mode'])) if 'summary_mode' in config else False
-    architecture = str(config['architecture']) if 'architecture' in config else "mlp"
-    if architecture == "deepset":
-        model = HaloMassSetNetwork(int(config['max_neighbors']), _n_features(only_angular, summary_mode),
-                                    list(config['phi_dims']), hidden_dims, dropout,
-                                    pooling=str(config['pooling']))
-    else:
-        model = HaloMassNetwork(input_dim, hidden_dims, dropout)
-    model.load_state_dict(torch.load(model_dir / "halo_mass_best.pt", map_location="cpu"))
-    model.eval()  # disables dropout -- predictions are deterministic
-    return model, only_angular, summary_mode
 
 
 def uvlf_sigma_per_theta(params: np.ndarray) -> np.ndarray:
@@ -191,7 +176,7 @@ def weighted_mean_se(x, w):
     return mean, np.sqrt(var / n_eff), n_eff
 
 
-def calibration_row(axes, true, mu, sigma, w, n_bins, label):
+def calibration_row(axes, true, mu, pit, w, n_bins, label):
     """Fill one row of 4 panels; returns a dict of summary numbers for the log."""
     w = w / w.sum()
     n_eff_total = 1.0 / np.sum(w ** 2)
@@ -239,7 +224,6 @@ def calibration_row(axes, true, mu, sigma, w, n_bins, label):
     # n_pit bins holds probability p = 1/n_pit; the shaded band is the
     # +/-2-sigma binomial scatter of that, using n_eff.
     ax = axes[2]
-    pit = norm.cdf((true - mu) / sigma)
     n_pit = 20
     hist, pedges = np.histogram(pit, bins=n_pit, range=(0, 1), weights=w)
     p_bin = 1.0 / n_pit
@@ -248,18 +232,22 @@ def calibration_row(axes, true, mu, sigma, w, n_bins, label):
     ax.axhspan(1 - band, 1 + band, color='0.85')
     ax.axhline(1.0, color='k', lw=1, ls='--')
     ax.stairs(dens, pedges, color='C2', lw=1.5)
-    ax.set_xlabel(r"PIT $= \Phi((\mathrm{true}-\mu)/\sigma)$")
+    ax.set_xlabel(r"PIT $= F_{\rm pred}(\mathrm{true})$")
     ax.set_ylabel("density")
     ax.set_title("PIT (flat = calibrated)", fontsize=9)
 
-    # (d) Coverage curve: fraction of true values within the central
-    # q-interval mu +/- z_q sigma, with z_q = Phi^-1((1+q)/2).
+    # (d) Coverage curves, both from the PIT so they hold for mixtures too:
+    # central q-interval (|PIT - 0.5| < q/2; for a single Gaussian this is
+    # exactly mu +/- Phi^-1((1+q)/2) sigma) and one-sided lower q-quantile
+    # (PIT < q), which exposes skew the central curve averages away.
     ax = axes[3]
     q = np.linspace(0.05, 0.95, 19)
-    absz = np.abs(true - mu) / sigma
-    cov = np.array([np.sum(w * (absz < norm.ppf(0.5 + 0.5 * qq))) for qq in q])
+    cov = np.array([np.sum(w * (np.abs(pit - 0.5) < qq / 2)) for qq in q])
+    cov_lo = np.array([np.sum(w * (pit < qq)) for qq in q])
     ax.plot([0, 1], [0, 1], 'k--', lw=1)
-    ax.plot(q, cov, 'o-', ms=3, color='C3')
+    ax.plot(q, cov, 'o-', ms=3, color='C3', label='central interval')
+    ax.plot(q, cov_lo, 's-', ms=3, color='C4', label='one-sided (PIT < q)')
+    ax.legend(fontsize=8)
     ax.set_xlabel("nominal coverage")
     ax.set_ylabel("empirical coverage")
     ax.set_title("coverage (on diagonal = calibrated)", fontsize=9)
@@ -271,8 +259,8 @@ def calibration_row(axes, true, mu, sigma, w, n_bins, label):
     return dict(
         n=len(true), n_eff=n_eff_total,
         rms=np.sqrt(np.sum(w * (true - mu) ** 2)),
-        mean_sigma=np.sum(w * sigma),
-        cov68=np.sum(w * (absz < 1.0)), cov95=np.sum(w * (absz < 1.96)),
+        cov68=np.sum(w * (np.abs(pit - 0.5) < 0.6827 / 2)),
+        cov95=np.sum(w * (np.abs(pit - 0.5) < 0.9545 / 2)),
         reverse_bias_mean=np.sum(dev_w * np.abs(devs)) / dev_w.sum(),
         reverse_bias_max=np.max(np.abs(devs)),
         pit_ks=ks,
@@ -282,10 +270,9 @@ def calibration_row(axes, true, mu, sigma, w, n_bins, label):
 def main():
     args = parse_args()
 
-    # Same normalization bounds the model was trained with (saved by
-    # train_halo_mass.py), rather than recomputing them from the file list.
-    norm_ = np.load(args.model_dir / "normalization.npz")
-    model, only_angular, summary_mode = load_model(args.model_dir)
+    # Shared loader (train_halo_mass.load_halo_mass_model): architecture,
+    # mixture head, bright-M_UV input and the training normalization bounds.
+    model, cfg = load_halo_mass_model(args.model_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
@@ -296,9 +283,10 @@ def main():
     np.random.seed(args.train_seed)
     dataset = HaloMassDataset(
         database_dirs=args.database_dir,
-        param_min=norm_['param_min'], param_max=norm_['param_max'],
+        param_min=cfg['param_min'], param_max=cfg['param_max'],
         max_per_catalog=args.max_per_catalog,
-        summary_mode=summary_mode, only_angular=only_angular,
+        summary_mode=cfg['summary_mode'], only_angular=cfg['only_angular'],
+        use_bright_muv=cfg['use_bright_muv'],
         weight_by_catalog_count=args.weight_by_catalog_count,
         reweight_by_mass=args.reweight_by_mass,
         reweight_alpha=args.reweight_alpha,
@@ -326,13 +314,15 @@ def main():
 
     # Inference over the held-out examples, batched.
     loader = DataLoader(Subset(dataset, val_idx), batch_size=args.batch_size, shuffle=False)
-    true, mu, sigma, w = [], [], [], []
+    true, mu, sigma, pit, w = [], [], [], [], []
     with torch.no_grad():
         for x, target, weight in loader:
-            m, log_s = model(x.to(device))
-            mu.append(m.cpu().numpy()); sigma.append(torch.exp(log_s).cpu().numpy())
+            out = mixture_outputs(model, x.to(device))
+            m, sd = mixture_mean_std(*out)  # predictive mean/std (= mu, sigma if K = 1)
+            mu.append(m.cpu().numpy()); sigma.append(sd.cpu().numpy())
+            pit.append(mixture_cdf(*out, target.to(device)).cpu().numpy())
             true.append(target.numpy()); w.append(weight.numpy())
-    true, mu, sigma, w = (np.concatenate(a).astype(np.float64) for a in (true, mu, sigma, w))
+    true, mu, sigma, pit, w = (np.concatenate(a).astype(np.float64) for a in (true, mu, sigma, pit, w))
     params = np.array([dataset.params[i] for i in val_idx])
 
     log.info("Computing UVLF consistency of each val example's theta ...")
@@ -350,9 +340,10 @@ def main():
         if sel.sum() < 50:
             log.warning(f"'{label}': only {sel.sum()} examples, skipping.")
             continue
-        s = calibration_row(axes[r], true[sel], mu[sel], sigma[sel], wt[sel], args.n_bins, label)
+        s = calibration_row(axes[r], true[sel], mu[sel], pit[sel], wt[sel], args.n_bins, label)
+        mean_sigma = np.sum(wt[sel] * sigma[sel]) / wt[sel].sum()
         log.info(f"[{label}]  n={s['n']}  n_eff={s['n_eff']:.0f}  RMS={s['rms']:.3f}  "
-                 f"<sigma>={s['mean_sigma']:.3f}  cov68={s['cov68']:.1%}  cov95={s['cov95']:.1%}")
+                 f"<sigma>={mean_sigma:.3f}  cov68={s['cov68']:.1%}  cov95={s['cov95']:.1%}")
         log.info(f"    reverse-binning |<true>-<mu>|: weighted mean {s['reverse_bias_mean']:.3f} dex, "
                  f"max {s['reverse_bias_max']:.3f} dex   PIT KS distance {s['pit_ks']:.3f}")
     fig.suptitle(f"Held-out calibration: {args.model_dir.name}", fontsize=11)
@@ -362,7 +353,7 @@ def main():
 
     # Raw per-example results, so further checks don't need another inference pass.
     npz_path = args.output.with_suffix(".npz")
-    np.savez(npz_path, true_logmh=true, mu=mu, sigma=sigma, train_weight=w,
+    np.savez(npz_path, true_logmh=true, mu=mu, sigma=sigma, pit=pit, train_weight=w,
              params=params, uvlf_sigma=uvlf_sig, dataset_index=val_idx)
     log.info(f"Saved: {npz_path}")
 

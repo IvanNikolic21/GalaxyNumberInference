@@ -27,8 +27,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from train_nre import env_to_array, normalize_params, N_PARAMS
-from train_halo_mass import HaloMassNetwork, HaloMassSetNetwork
+from train_halo_mass import load_halo_mass_model, build_input, mixture_outputs, mixture_mean_std
 
 
 def parse_args():
@@ -47,29 +46,8 @@ def main():
     args = parse_args()
     rng = np.random.default_rng(args.seed)
 
-    config = np.load(args.model_dir / "model_config.npz")
-    norm   = np.load(args.model_dir / "normalization.npz")
-    param_min, param_max = norm['param_min'], norm['param_max']
-    hidden_dims  = list(config['hidden_dims'])
-    dropout      = float(config['dropout'])
-    input_dim    = int(config['input_dim'])
-    only_angular = bool(int(config['only_angular']))
-    summary_mode = bool(int(config['summary_mode'])) if 'summary_mode' in config else False
-    # 'architecture' is absent from checkpoints trained before the Deep Sets
-    # addition -- those are all --architecture mlp, so default to that
-    # rather than erroring on an older model_config.npz.
-    architecture = str(config['architecture']) if 'architecture' in config else "mlp"
-
-    if architecture == "deepset":
-        phi_dims      = list(config['phi_dims'])
-        pooling       = str(config['pooling'])
-        max_neighbors = int(config['max_neighbors'])
-        n_feat        = (input_dim - 1 - N_PARAMS) // max_neighbors  # -1 for n_norm, -N_PARAMS for theta
-        model = HaloMassSetNetwork(max_neighbors, n_feat, phi_dims, hidden_dims, dropout, pooling=pooling)
-    else:
-        model = HaloMassNetwork(input_dim, hidden_dims, dropout)
-    model.load_state_dict(torch.load(args.model_dir / "halo_mass_best.pt", map_location="cpu"))
-    model.eval()
+    # Shared loader: handles architecture, --use-bright-muv and mixture heads.
+    model, cfg = load_halo_mass_model(args.model_dir)
 
     # Gather candidate (file, env_index) pairs across all database dirs, then
     # randomly sample --n-examples of them -- avoids loading every file in full.
@@ -89,9 +67,12 @@ def main():
             data = np.load(path)
             if 'bright_logmh' not in data.files:
                 continue
+            if cfg['use_bright_muv'] and 'bright_muv' not in data.files:
+                continue
             coords, offsets = data['coords'], data['offsets']
             params = data['params']
             bright_logmh = data['bright_logmh']
+            bright_muv = data['bright_muv'] if cfg['use_bright_muv'] else None
         except Exception:
             continue
 
@@ -103,16 +84,14 @@ def main():
         if len(env) == 0:
             continue
 
-        flat, n_norm, n, dists = env_to_array(env, summary_mode=summary_mode, only_angular=only_angular)
-        x = torch.from_numpy(np.concatenate([flat, n_norm]))
-        theta = torch.from_numpy(normalize_params(params, param_min, param_max))
-        x_in = torch.cat([x, theta]).unsqueeze(0).float()
+        x_in = build_input(env, params, None if bright_muv is None else bright_muv[idx], cfg)
 
         with torch.no_grad():
-            mu, log_sigma = model(x_in)
+            # Predictive mean/std (= mu, sigma for a single-Gaussian model).
+            mu, sigma = mixture_mean_std(*mixture_outputs(model, x_in))
         true_logmh.append(float(bright_logmh[idx]))
         pred_mu.append(float(mu[0]))
-        pred_sigma.append(float(torch.exp(log_sigma[0])))
+        pred_sigma.append(float(sigma[0]))
 
     true_logmh = np.array(true_logmh)
     pred_mu    = np.array(pred_mu)

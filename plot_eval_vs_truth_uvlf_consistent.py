@@ -60,8 +60,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from train_nre import env_to_array, normalize_params, N_PARAMS
-from train_halo_mass import HaloMassNetwork, HaloMassSetNetwork
+from train_halo_mass import load_halo_mass_model, build_input, mixture_outputs, mixture_mean_std
 from uvlf import Mason15, Observations
 
 
@@ -90,26 +89,8 @@ def main():
     args = parse_args()
     rng = np.random.default_rng(args.seed)
 
-    config = np.load(args.model_dir / "model_config.npz")
-    norm_  = np.load(args.model_dir / "normalization.npz")
-    param_min, param_max = norm_['param_min'], norm_['param_max']
-    hidden_dims  = list(config['hidden_dims'])
-    dropout      = float(config['dropout'])
-    input_dim    = int(config['input_dim'])
-    only_angular = bool(int(config['only_angular']))
-    summary_mode = bool(int(config['summary_mode'])) if 'summary_mode' in config else False
-    architecture = str(config['architecture']) if 'architecture' in config else "mlp"
-
-    if architecture == "deepset":
-        phi_dims      = list(config['phi_dims'])
-        pooling       = str(config['pooling'])
-        max_neighbors = int(config['max_neighbors'])
-        n_feat        = (input_dim - 1 - N_PARAMS) // max_neighbors
-        model = HaloMassSetNetwork(max_neighbors, n_feat, phi_dims, hidden_dims, dropout, pooling=pooling)
-    else:
-        model = HaloMassNetwork(input_dim, hidden_dims, dropout)
-    model.load_state_dict(torch.load(args.model_dir / "halo_mass_best.pt", map_location="cpu"))
-    model.eval()
+    # Shared loader: handles architecture, --use-bright-muv and mixture heads.
+    model, cfg = load_halo_mass_model(args.model_dir)
 
     print("Building Mason15(z=10.0) model and loading the observed UVLF ...")
     mason15 = Mason15(z=10.0)
@@ -174,6 +155,7 @@ def main():
         try:
             coords, offsets = data['coords'], data['offsets']
             bright_logmh = data['bright_logmh']
+            bright_muv = data['bright_muv'] if cfg['use_bright_muv'] else None
         except Exception:
             continue
 
@@ -189,16 +171,14 @@ def main():
             if len(env) == 0:
                 continue
 
-            flat, n_norm, n, dists = env_to_array(env, summary_mode=summary_mode, only_angular=only_angular)
-            x = torch.from_numpy(np.concatenate([flat, n_norm]))
-            theta = torch.from_numpy(normalize_params(params, param_min, param_max))
-            x_in = torch.cat([x, theta]).unsqueeze(0).float()
+            x_in = build_input(env, params, None if bright_muv is None else bright_muv[idx], cfg)
 
             with torch.no_grad():
-                mu, log_sigma = model(x_in)
+                # Predictive mean/std (= mu, sigma for a single-Gaussian model).
+                mu, sigma = mixture_mean_std(*mixture_outputs(model, x_in))
             true_logmh.append(float(bright_logmh[idx]))
             pred_mu.append(float(mu[0]))
-            pred_sigma.append(float(torch.exp(log_sigma[0])))
+            pred_sigma.append(float(sigma[0]))
 
     print(f"\nScanned {n_theta_scanned} theta points; {n_theta_passed} "
           f"({n_theta_passed / max(n_theta_scanned, 1):.2%}) passed the <={args.max_sigma}-sigma "

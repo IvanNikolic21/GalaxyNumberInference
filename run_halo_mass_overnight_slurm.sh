@@ -16,47 +16,34 @@
 ##SBATCH --account=your_account
 
 # =============================================================================
-# Overnight halo-mass model retrain -- v10.
+# Overnight halo-mass model retrain -- v11.
 #
-# v9 added --uvlf-reweight to scale each example's training loss by its
-# parent theta's UVLF plausibility -- but Ivan's read of
-# eval_vs_truth_uvlf5sigma_v9.pdf was right: the residual shrinkage bias,
-# WITHIN the UVLF-consistent subset, looked essentially unchanged from v8's.
-# diagnose_effective_mass_distribution.py confirmed it quantitatively: the
-# max/min bin fraction ratio within that subset was still 153x after v9's
-# combined LDS x UVLF weighting (vs 245x raw) -- barely moved, and the
-# weight that DID shift went toward the already-dense HIGH-mass end, not
-# the genuinely sparse low-mass end.
+# v10 fixed the LDS x UVLF composition bug (max/min mass-bin ratio within
+# the UVLF-consistent subset 245x -> 37x), yet the predicted-vs-true S-shape
+# was unchanged. diagnose_heldout_calibration.py (held-out val split) showed
+# why: binned by PREDICTED mu, the training-weighted val set lies on y = x
+# (mean |<true>-<mu>| = 0.043 dex), i.e. the network was already a correct
+# posterior mean -- the S-shape in true-binned plots is regression to the
+# mean, expected whenever the inputs don't pin down Mh. Three real issues
+# remained, all addressed here:
 #
-# Root cause, found by that same diagnostic: --reweight-by-mass (LDS)
-# computed its density estimate over the RAW, unweighted example counts --
-# dominated by the 87% UVLF-implausible majority, where low mass looks
-# DENSE (flooded by implausible theta that can scatter low-mass halos
-# bright). So LDS was boosting whatever's globally sparse (high mass),
-# while UVLF-reweighting independently ALSO favors high mass (same
-# correlation, r=+0.38/rho=+0.78 between UVLF log-L and host mass) --
-# the two factors compounded in the SAME direction instead of LDS
-# targeting what's actually rare among UVLF-plausible theta specifically.
-# This was a composition bug between two reweighting schemes, not evidence
-# the architecture needed more work.
+#  1. Missing information: the bright galaxy's OWN M_UV was never stored or
+#     fed to the network (only the faint neighbors + "passed M_UV < -21.5").
+#     -> patch_bright_logmh.py now backfills bright_muv; --use-bright-muv.
+#     RUN THE PATCH ON ALL FOUR DATABASE DIRS BEFORE SUBMITTING THIS JOB --
+#     files without bright_muv are skipped (and the dataset shrinks).
+#  2. Non-Gaussian posterior: the v10 PIT showed a long low-mass tail and a
+#     sharp upper edge. -> --n-components 3 (Gaussian-mixture head).
+#  3. Wrong prior for the physical population: LDS (--reweight-by-mass) is a
+#     weight on the TARGET, so it changes the learned posterior (a weight on
+#     theta only cancels at fixed theta). On UVLF-consistent theta it made
+#     low-mu predictions up to 0.5 dex too low. -> LDS dropped; UVLF and
+#     catalog-count weighting (both functions of theta only) kept.
 #
-# v10's fix (train_halo_mass.py, no new CLI flags -- same v9 command,
-# automatic once both --reweight-by-mass and --uvlf-reweight are on): LDS's
-# density estimate is now computed USING the UVLF weight as the reference
-# population (np.bincount's weights= argument) instead of a plain count --
-# so "sparse" now means "sparse among UVLF-plausible theta," not "sparse
-# globally." Verified by simulation against the real empirical structure
-# before this run: under the old unweighted LDS, the sparsest-looking bin
-# was the HIGHEST mass bin (backwards); under the fixed, UVLF-weighted LDS,
-# it's correctly the LOWEST mass bin among plausible theta.
-#
-# Re-evaluates TWICE at the end, same as v9: the usual full-prior
-# eval_vs_truth.pdf, AND the UVLF-consistent-only check
-# (plot_eval_vs_truth_uvlf_consistent.py, <=5 sigma) -- the second one is
-# the actual test of whether the conditioned-LDS fix worked. Compare its
-# per-bin spread directly against v9's (and run
-# diagnose_effective_mass_distribution.py again against v10's database
-# weighting if the max/min ratio needs rechecking numerically).
+# smoke_test_halo_mass_mixture.py runs first and aborts the job if the new
+# loss/heads misbehave. Evaluation at the end: the two usual eval_vs_truth
+# plots plus diagnose_heldout_calibration.py (the meaningful test now --
+# reverse binning, PIT, central AND one-sided coverage, on held-out data).
 # =============================================================================
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
@@ -82,13 +69,17 @@ DB1=$NEIGHBORS/nre_database_prior_capped_seed1955
 DB2=$NEIGHBORS/nre_database_prior_capped_seed2027
 DB3=$NEIGHBORS/nre_database_prior_capped_seed3142
 DB4=$NEIGHBORS/nre_database_prior_capped_seed4242
-OUT=$NEIGHBORS/halo_mass_model_multibox4_v10
+OUT=$NEIGHBORS/halo_mass_model_multibox4_v11
 
-echo ">>> Training halo-mass model v10 (UVLF-conditioned LDS + Deep Sets + beta-NLL + early stopping)"
+echo ">>> Smoke test (mixture loss / heads)"
+python smoke_test_halo_mass_mixture.py || { echo "Smoke test FAILED -- aborting"; exit 1; }
+
+echo "======================================================"
+echo ">>> Training halo-mass model v11 (bright M_UV input + 3-component mixture + UVLF reweight, no LDS)"
 python train_halo_mass.py \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --only-angular --epochs 300 --max-per-catalog 0 --weight-by-catalog-count \
-    --reweight-by-mass --reweight-alpha 0.5 --reweight-bins 30 --lds-kernel-sigma 2.0 \
+    --use-bright-muv --n-components 3 \
     --beta-nll 0.5 \
     --uvlf-reweight --uvlf-sigma-scale 5.0 \
     --max-weight-ratio 10.0 --grad-clip 5.0 \
@@ -105,7 +96,7 @@ python evaluate_halo_mass_model.py \
     --model-dir $OUT \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --n-examples 500 \
-    --output $OUT/eval_vs_truth_v10.pdf
+    --output $OUT/eval_vs_truth_v11.pdf
 
 echo "======================================================"
 echo ">>> Re-running eval_vs_truth (UVLF-consistent theta only, <=5 sigma) -- the actual test"
@@ -113,7 +104,16 @@ python plot_eval_vs_truth_uvlf_consistent.py \
     --model-dir $OUT \
     --database-dir $DB1 $DB2 $DB3 $DB4 \
     --n-examples 500 --max-sigma 5.0 \
-    --output $OUT/eval_vs_truth_uvlf5sigma_v10.pdf
+    --output $OUT/eval_vs_truth_uvlf5sigma_v11.pdf
+
+echo "======================================================"
+echo ">>> Held-out calibration (reverse binning, PIT, central + one-sided coverage)"
+python diagnose_heldout_calibration.py \
+    --model-dir $OUT \
+    --database-dir $DB1 $DB2 $DB3 $DB4 \
+    --max-per-catalog 0 --weight-by-catalog-count \
+    --uvlf-reweight --uvlf-sigma-scale 5.0 --max-weight-ratio 10.0 \
+    --output $OUT/heldout_calibration_v11.pdf
 
 echo "======================================================"
 echo "Finished: $(date)"

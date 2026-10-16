@@ -2,13 +2,24 @@
 """
 patch_bright_logmh.py
 -----------------------
-Add the missing `bright_logmh` field to ALREADY-BUILT build_nre_database.py
-output files, WITHOUT redoing the expensive neighbor search (the part that
+Add the missing `bright_logmh` and/or `bright_muv` fields to ALREADY-BUILT
+build_nre_database.py output files, WITHOUT redoing the expensive neighbor search (the part that
 took close to a month for the 4-box multibox database). This only
 reproduces the cheap bright-galaxy selection step (load Stage-1 MUV
 catalog, deterministic shuffle + cap using the same seed+i as the original
-run) to recover which halo mass hosted each bright galaxy, then appends it
-to the existing .npz file in place -- no cKDTree, no neighbor search.
+run) to recover which halo hosted each bright galaxy -- its log(Mh) and its
+own M_UV -- then appends whichever of the two is missing to the existing
+.npz file in place -- no cKDTree, no neighbor search.
+
+bright_muv (added 2026-10-15): the bright galaxy's OWN UV magnitude was never
+stored by the original build, so the halo-mass network (train_halo_mass.py)
+only ever saw the faint neighbors plus the fact that the bright galaxy
+passed M_UV < BRIGHT_LIMIT. At fixed theta, M_UV is the most direct handle
+on halo mass (M_UV = f(Mh; Muv_add) + scatter sigma_UV(Mh; sa, sb)), and it
+is observable for the real target (GN-z11), so it belongs in the input.
+Files that already have bright_logmh get a STRONGER safety check here:
+the reproduced bright_logmh must match the stored one element-for-element
+(not just in length) before bright_muv is written next to it.
 
 Row order in --param-file determines the per-theta RNG seed (seed+i,
 matching build_nre_database.py's process_one exactly), so this MUST be run
@@ -16,8 +27,10 @@ with the identical prior.dat used for the original build, and the same
 --seed / --max-environments-per-catalog values -- otherwise the reproduced
 selection won't match what's already baked into the existing coords/offsets.
 As a safety check, each file's reproduced bright-galaxy count is compared
-against its existing offsets array before writing anything; a mismatch
-aborts that file instead of silently writing misaligned data.
+against its existing offsets array (and, where already present, its stored
+bright_logmh) before writing anything; a mismatch aborts that file instead
+of silently writing misaligned data. Every array already in the file is
+re-saved unchanged alongside the new field(s).
 
 Usage
 -----
@@ -81,13 +94,15 @@ def main():
             continue
 
         with np.load(out_path) as d:
-            if "bright_logmh" in d.files:
+            if "bright_logmh" in d.files and "bright_muv" in d.files:
                 n_already_done += 1
                 continue
-            offsets = d["offsets"]
-            stored_params = d["params"]
-            coords = d["coords"]
-            n_bright_true_stored = int(d["n_bright_true"])
+            # Keep EVERY existing array (not just the ones named below), so
+            # re-saving never drops a field some other script added.
+            existing = {k: d[k] for k in d.files}
+        offsets = existing["offsets"]
+        stored_params = existing["params"]
+        n_bright_true_stored = int(existing["n_bright_true"])
 
         if not np.allclose(stored_params, [Muv_add, sigmaUV_a, sigmaUV_b], atol=1e-6):
             log.error(f"  [{i}] {out_path.name}: stored params {stored_params} != "
@@ -106,13 +121,19 @@ def main():
         muvs = load_muv_catalog(cat_path, index=0).astype(np.float32, copy=False)
         bright_mask = muvs < BRIGHT_LIMIT
         bright_logmhs_sel = halo_logmhs[bright_mask]
+        bright_muvs_sel = muvs[bright_mask]
         n_bright_true = len(bright_logmhs_sel)
 
+        # ONE permutation applied to both arrays, so they stay index-aligned
+        # (same as build_nre_database.py's process_one).
         rng = np.random.default_rng(args.seed + i)
         if n_bright_true > 0:
-            bright_logmhs_sel = bright_logmhs_sel[rng.permutation(n_bright_true)]
+            perm = rng.permutation(n_bright_true)
+            bright_logmhs_sel = bright_logmhs_sel[perm]
+            bright_muvs_sel = bright_muvs_sel[perm]
         if max_env_per_catalog is not None and n_bright_true > max_env_per_catalog:
             bright_logmhs_sel = bright_logmhs_sel[:max_env_per_catalog]
+            bright_muvs_sel = bright_muvs_sel[:max_env_per_catalog]
 
         n_envs_expected = len(offsets) - 1
         if n_bright_true_stored != n_bright_true or len(bright_logmhs_sel) != n_envs_expected:
@@ -124,18 +145,21 @@ def main():
             n_length_fail += 1
             continue
 
+        # Element-wise cross-check against an already-patched bright_logmh:
+        # a matching length could still hide a different permutation.
+        if "bright_logmh" in existing and not np.allclose(existing["bright_logmh"], bright_logmhs_sel):
+            log.error(f"  [{i}] {out_path.name}: reproduced bright_logmh does not match the stored "
+                       f"one element-wise -- ABORTING this file (selection not reproduced).")
+            n_length_fail += 1
+            continue
+
         if args.dry_run:
             n_patched += 1
             continue
 
-        np.savez_compressed(
-            out_path,
-            coords=coords,
-            offsets=offsets,
-            params=stored_params,
-            n_bright_true=n_bright_true_stored,
-            bright_logmh=bright_logmhs_sel.astype(np.float32),
-        )
+        existing.setdefault("bright_logmh", bright_logmhs_sel.astype(np.float32))
+        existing.setdefault("bright_muv", bright_muvs_sel.astype(np.float32))
+        np.savez_compressed(out_path, **existing)
         n_patched += 1
         if (i + 1) % 200 == 0:
             log.info(f"  [{i+1}/{len(params)}] patched so far: {n_patched}")

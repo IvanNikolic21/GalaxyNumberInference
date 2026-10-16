@@ -182,6 +182,7 @@ def process_one(
 
     bright_coords_sel = _halo_coords[bright_mask]
     bright_logmhs_sel = _halo_logmhs[bright_mask]
+    bright_muvs_sel   = muvs[bright_mask]   # the bright galaxy's own M_UV (halo-mass network input)
     n_bright_true = len(bright_coords_sel)
 
     # Always randomize the order of bright galaxies, independent of capping --
@@ -198,6 +199,7 @@ def process_one(
         perm = rng.permutation(n_bright_true)
         bright_coords_sel = bright_coords_sel[perm]
         bright_logmhs_sel = bright_logmhs_sel[perm]
+        bright_muvs_sel   = bright_muvs_sel[perm]
 
     # Subsample to a fixed cap so every parameter point contributes a comparable
     # number of training environments regardless of how many bright galaxies it
@@ -213,6 +215,7 @@ def process_one(
     if max_env_per_catalog is not None and n_bright_true > max_env_per_catalog:
         bright_coords_sel = bright_coords_sel[:max_env_per_catalog]
         bright_logmhs_sel = bright_logmhs_sel[:max_env_per_catalog]
+        bright_muvs_sel   = bright_muvs_sel[:max_env_per_catalog]
 
     half_side = cfg.search_box_mpc(REDSHIFT)
 
@@ -292,6 +295,7 @@ def process_one(
         params        = params_arr,
         n_bright_true = n_bright_true,   # count before subsampling, for diagnostics
         bright_logmh  = bright_logmh_arr,  # log10(Mh/Msun) of each bright galaxy, same order as offsets
+        bright_muv    = bright_muvs_sel.astype(np.float32),  # each bright galaxy's own M_UV, same order
     )
     log.info(f"  [{i+1}/{n_total}] Saved: {out_path.name}  "
              f"({len(bright_coords_sel)}/{n_bright_true} bright used, "

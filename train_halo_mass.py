@@ -27,7 +27,7 @@ Model and training choices, in one place for reference
   variance of the target probability distribution," IEEE ICNN. Also Kendall &
   Gal (2017), "What Uncertainties Do We Need in Bayesian Deep Learning for
   Computer Vision?", https://arxiv.org/abs/1703.04977 (their "aleatoric
-  uncertainty" loss is the same Gaussian NLL used in gaussian_nll() below).
+  uncertainty" loss is the same Gaussian NLL used in mixture_nll() below).
 - Residual MLP blocks (Linear -> LayerNorm -> GELU -> Dropout, twice, plus a
   skip connection): residual connections are from He et al. (2016), "Deep
   Residual Learning for Image Recognition," https://arxiv.org/abs/1512.03385
@@ -74,7 +74,7 @@ Model and training choices, in one place for reference
   gradient, mu stops improving, and inflating sigma further becomes the only
   way left to reduce the loss -- a runaway feedback loop. Fix: scale each
   example's NLL by sigma.detach()**(2*beta) (--beta-nll, default 0.5) --
-  see gaussian_nll() below for the full mechanism.
+  see mixture_nll() below for the full mechanism.
 - Deep Sets (--architecture deepset): Zaheer, Kottur, Ravanbakhsh, Poczos,
   Salakhutdinov & Smola (2017), "Deep Sets," https://arxiv.org/abs/1703.06114
   (NeurIPS). HaloMassNetwork flattens the distance-sorted, zero-padded
@@ -150,7 +150,7 @@ import argparse
 # overhead/verbosity isn't worth it there).
 import logging
 # math: only used for math.log(2 * math.pi), the constant term in the
-# Gaussian negative-log-likelihood (see gaussian_nll() below).
+# Gaussian negative-log-likelihood (see mixture_nll() below).
 import math
 # zipfile: a .npz file is a zip archive internally; zipfile.BadZipFile is
 # caught explicitly when a database file is truncated/corrupted (e.g. an
@@ -215,6 +215,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(
                      datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
 
+# Reference magnitude subtracted from the bright galaxy's own M_UV before it
+# is fed to the network (--use-bright-muv): build_nre_database.py's
+# BRIGHT_LIMIT, so the feature is "magnitudes brighter than the selection
+# cut" -- 0 at the cut, typically -0..-3 -- an O(1) input, same scale as
+# the [-1, 1]-normalized theta it sits next to. Hard-coded rather than
+# imported, since importing build_nre_database pulls in its whole
+# 21cmFAST/halo-catalog dependency chain.
+BRIGHT_MUV_REF = -21.5
+
 
 def _smooth_bin_counts(counts: np.ndarray, kernel_sigma: float) -> np.ndarray:
     """Label Distribution Smoothing's kernel step (Yang et al. 2021, see the
@@ -275,6 +284,7 @@ class HaloMassDataset(Dataset):
         max_weight_ratio: float = 10.0,
         uvlf_reweight: bool = False,
         uvlf_sigma_scale: float = 5.0,
+        use_bright_muv: bool = False,
     ):
         # Theta normalization bounds (computed once, in main(), across ALL
         # loaded database files, and passed in here) -- stored so
@@ -295,12 +305,17 @@ class HaloMassDataset(Dataset):
         # env_to_array's docstring in train_nre.py for the exact definitions.
         self.summary_mode = summary_mode
         self.only_angular = only_angular
+        # Whether __getitem__ appends the bright galaxy's own M_UV (minus
+        # BRIGHT_MUV_REF) as one extra scalar input after theta -- see
+        # --use-bright-muv and patch_bright_logmh.py's docstring for why.
+        self.use_bright_muv = use_bright_muv
 
         # Parallel lists (not yet batched into a single array), one entry
         # per (environment, log Mh) training example:
         self.envs      = []   # raw (N_neighbors_in_this_env, 4) coordinate/MUV arrays
         self.params    = []   # that example's theta = (Muv_add, sigmaUV_a, sigmaUV_b)
         self.logmh     = []   # ground-truth log10(Mh/Msun) of the bright galaxy
+        self.bright_muv = []  # the bright galaxy's own M_UV (only filled if use_bright_muv)
         self.weights   = []   # per-example loss weight (see below)
 
         cat_idx = 0  # counts catalogs (.npz files) actually processed; not read anywhere else
@@ -331,6 +346,14 @@ class HaloMassDataset(Dataset):
                         print(f"Skipping file with no bright_logmh (not yet patched): {path}")
                         continue
                     bright_logmh = data['bright_logmh']  # (n_envs,) halo mass of the bright galaxy owning each environment
+                    if use_bright_muv:
+                        if 'bright_muv' not in data.files:
+                            # Same skip-don't-crash policy as bright_logmh
+                            # above: run patch_bright_logmh.py on this
+                            # database dir to backfill it.
+                            print(f"Skipping file with no bright_muv (not yet patched): {path}")
+                            continue
+                        bright_muv = data['bright_muv']  # (n_envs,), same order as bright_logmh
                 except (EOFError, ValueError, OSError, KeyError, zipfile.BadZipFile) as e:
                     # Catches a truncated/corrupted .npz (e.g. a build job
                     # killed mid-write) without aborting the whole load.
@@ -393,6 +416,8 @@ class HaloMassDataset(Dataset):
                     self.envs.append(env.copy())
                     self.params.append(params)
                     self.logmh.append(float(bright_logmh[i]))
+                    if use_bright_muv:
+                        self.bright_muv.append(float(bright_muv[i]))
                     self.weights.append(weight)
 
                 cat_idx += 1
@@ -589,8 +614,8 @@ class HaloMassDataset(Dataset):
             # close to zero rather than floor at the bin's own count of >=1).
             mass_weight = 1.0 / np.maximum(smoothed_counts[bin_idx], 1e-6) ** reweight_alpha
             # Renormalize so the mean weight is exactly 1 -- keeps the
-            # overall magnitude of gaussian_nll's weighted average (see
-            # gaussian_nll() below) from drifting as reweight_alpha/
+            # overall magnitude of mixture_nll's weighted average (see
+            # mixture_nll() below) from drifting as reweight_alpha/
             # reweight_bins/lds_kernel_sigma change, which would otherwise
             # also silently change the effective learning rate.
             mass_weight = mass_weight / mass_weight.mean()
@@ -638,7 +663,7 @@ class HaloMassDataset(Dataset):
             # everything exactly 0 too, collapsing [median/ratio,
             # median*ratio] to [0, 0] and clipping the ENTIRE weight array
             # to zero -- a silent, catastrophic weight.sum()==0 crash in
-            # gaussian_nll on the very first batch. Verified this failure
+            # mixture_nll on the very first batch. Verified this failure
             # mode numerically against a realistic lopsided sigma
             # distribution before this fix existed. The lower clip was
             # never actually load-bearing for the ORIGINAL v2 bug either
@@ -712,6 +737,12 @@ class HaloMassDataset(Dataset):
         x = torch.from_numpy(np.concatenate([flat, n_norm]))
         theta = torch.from_numpy(normalize_params(params, self.param_min, self.param_max))
         x_in = torch.cat([x, theta])
+        if self.use_bright_muv:
+            # One extra scalar AFTER theta, so the leading layout
+            # [neighbors, n_norm, theta] (which HaloMassSetNetwork slices by
+            # position) is unchanged; the set network treats everything
+            # after n_norm as "global" inputs, see its forward().
+            x_in = torch.cat([x_in, torch.tensor([self.bright_muv[idx] - BRIGHT_MUV_REF])])
 
         # Regression target (ground-truth log Mh) and this example's loss
         # weight, both as 0-dim float32 tensors -- DataLoader's default
@@ -726,8 +757,10 @@ class HaloMassDataset(Dataset):
 # ---------------------------------------------------------------------------
 
 class HaloMassNetwork(nn.Module):
-    def __init__(self, input_dim: int, hidden_dims: list = [256, 256, 256, 256], dropout: float = 0.1):
+    def __init__(self, input_dim: int, hidden_dims: list = [256, 256, 256, 256], dropout: float = 0.1,
+                 n_components: int = 1):
         super().__init__()
+        self.n_components = n_components
         # First layer: project the raw input_dim-length vector up to the
         # network's working width (hidden_dims[0]), then normalize
         # (LayerNorm) and nonlinearly activate (GELU) -- standard "stem"
@@ -768,21 +801,18 @@ class HaloMassNetwork(nn.Module):
         # -- "pre-sigmoid" because forward() below still has to squash this
         # second output through a bounded sigmoid transform before it's a
         # usable log_sigma; see forward().
-        self.output = nn.Linear(hidden_dims[-1], 2)  # (mu, pre-sigmoid log_sigma)
-        with torch.no_grad():
-            # Start log_sigma's raw output at 0 -> sigmoid(0)=0.5 -> log_sigma=0 (sigma=1)
-            # initially, a sane starting uncertainty rather than drifting toward the
-            # edge of the allowed range right out of the gate. (nn.Linear's default
-            # init already gives weights/biases small random values; this just
-            # overrides the bias for the log_sigma output specifically, leaving
-            # the mu output's bias at its default random init.)
-            self.output.bias[1] = 0.0
+        # With --n-components K > 1 the head is a Gaussian mixture instead
+        # (see _make_head/_split_head below); K = 1 keeps this exact 2-output
+        # layout, so every pre-mixture checkpoint still loads unchanged.
+        self.output = _make_head(hidden_dims[-1], n_components)
 
     def forward(self, x):
         h = self.input_proj(x)
         for block in self.blocks:
             h = block(h)
         out = self.output(h)
+        if self.n_components > 1:
+            return _split_head(out, self.n_components)
         mu = out[:, 0]
         # Smooth (always-differentiable) bound instead of a hard clamp: a hard
         # clamp has exactly zero gradient once log_sigma is pushed past the
@@ -800,6 +830,81 @@ class HaloMassNetwork(nn.Module):
         # than widening this bound further.)
         log_sigma = -3.0 + 6.0 * torch.sigmoid(out[:, 1])
         return mu, log_sigma
+
+
+def _make_head(in_dim: int, n_components: int) -> nn.Linear:
+    """Final linear layer: 2 outputs (mu, raw log_sigma) for a single Gaussian,
+    or 3K outputs (K mixture logits, K means, K raw log_sigmas) for a K-component
+    Gaussian mixture -- a mixture density network (Bishop 1994, "Mixture
+    Density Networks", Aston University tech. report NCRG/94/004).
+
+    Why a mixture: the v10 held-out PIT (diagnose_heldout_calibration.py)
+    showed a SKEWED conditional p(log Mh | env, theta) -- excess mass in the
+    low tail (low-mass halos up-scattered into the bright sample) and a sharp
+    upper edge -- which a single symmetric Gaussian cannot represent. There is
+    no a-priori reason for this distribution to be Gaussian; a few mixture
+    components can represent skew/heavy tails while keeping a closed-form
+    density and CDF.
+    """
+    if n_components == 1:
+        head = nn.Linear(in_dim, 2)
+        with torch.no_grad():
+            # Start log_sigma's raw output at 0 -> sigmoid(0)=0.5 -> log_sigma=0 (sigma=1)
+            # initially, a sane starting uncertainty rather than drifting toward the
+            # edge of the allowed range right out of the gate. (nn.Linear's default
+            # init already gives weights/biases small random values; this just
+            # overrides the bias for the log_sigma output specifically, leaving
+            # the mu output's bias at its default random init.)
+            head.bias[1] = 0.0
+        return head
+    K = n_components
+    head = nn.Linear(in_dim, 3 * K)
+    with torch.no_grad():
+        head.bias[:K] = 0.0                            # equal initial mixture weights
+        head.bias[K:2 * K] = torch.linspace(-1.0, 1.0, K)  # spread initial means: breaks the
+                                                       # symmetry between otherwise-interchangeable components
+        head.bias[2 * K:] = 0.0                        # sigma = 1 start, as for K = 1
+    return head
+
+
+def _split_head(out: torch.Tensor, K: int):
+    """(batch, 3K) head output -> (logit_pi, mu, log_sigma), each (batch, K).
+    log_sigma gets the same smooth sigmoid bound as the single-Gaussian case
+    (see HaloMassNetwork.forward for why a hard clamp is avoided)."""
+    logit_pi  = out[:, :K]
+    mu        = out[:, K:2 * K]
+    log_sigma = -3.0 + 6.0 * torch.sigmoid(out[:, 2 * K:])
+    return logit_pi, mu, log_sigma
+
+
+def mixture_outputs(model, x):
+    """Uniform (logit_pi, mu, log_sigma), each (batch, K), for ANY model:
+    a single-Gaussian model (K = 1, forward returns (mu, log_sigma) with shape
+    (batch,)) is wrapped as a 1-component mixture with logit 0, so all the
+    loss/diagnostic code below has one code path."""
+    out = model(x)
+    if len(out) == 3:
+        return out
+    mu, log_sigma = out
+    return torch.zeros_like(mu)[:, None], mu[:, None], log_sigma[:, None]
+
+
+def mixture_mean_std(logit_pi, mu, log_sigma):
+    """Mean and standard deviation of the predicted mixture, each (batch,):
+    mean = sum_k pi_k mu_k;  var = sum_k pi_k (sigma_k^2 + mu_k^2) - mean^2
+    (law of total variance). For K = 1 this is exactly (mu, sigma)."""
+    pi = torch.softmax(logit_pi, dim=-1)
+    mean = (pi * mu).sum(-1)
+    var = (pi * (torch.exp(2 * log_sigma) + mu ** 2)).sum(-1) - mean ** 2
+    return mean, torch.sqrt(var.clamp(min=1e-12))
+
+
+def mixture_cdf(logit_pi, mu, log_sigma, target):
+    """Predicted CDF at `target` (batch,): sum_k pi_k Phi((target - mu_k)/sigma_k).
+    This is the PIT value used by diagnose_heldout_calibration.py."""
+    pi = torch.softmax(logit_pi, dim=-1)
+    z = (target[:, None] - mu) / torch.exp(log_sigma)
+    return (pi * 0.5 * (1.0 + torch.erf(z / math.sqrt(2.0)))).sum(-1)
 
 
 def _n_features(only_angular: bool, summary_mode: bool) -> int:
@@ -827,11 +932,12 @@ def _n_features(only_angular: bool, summary_mode: bool) -> int:
 class HaloMassSetNetwork(nn.Module):
     def __init__(self, max_neighbors: int, n_feat: int, phi_dims: list = [64, 64],
                  rho_hidden_dims: list = [256, 256, 256, 256], dropout: float = 0.1,
-                 pooling: str = "sum"):
+                 pooling: str = "sum", n_extra: int = 0, n_components: int = 1):
         super().__init__()
         self.max_neighbors = max_neighbors
         self.n_feat        = n_feat
         self.pooling       = pooling
+        self.n_components  = n_components
 
         # phi: a small MLP applied INDEPENDENTLY and IDENTICALLY to every
         # neighbor row (nn.Linear/nn.LayerNorm broadcast over any number of
@@ -853,7 +959,10 @@ class HaloMassSetNetwork(nn.Module):
         # operating on [pooled_embedding, n_norm, theta] (width
         # embed_dim + 1 + N_PARAMS) instead of the old flattened
         # (MAX_NEIGHBORS*n_feat + 1 + N_PARAMS)-wide vector.
-        rho_input_dim = embed_dim + 1 + N_PARAMS
+        # n_extra: per-environment scalars appended AFTER theta (currently
+        # just the bright galaxy's own M_UV with --use-bright-muv); they
+        # bypass phi and go straight into rho alongside n_norm and theta.
+        rho_input_dim = embed_dim + 1 + N_PARAMS + n_extra
         self.input_proj = nn.Sequential(
             nn.Linear(rho_input_dim, rho_hidden_dims[0]),
             nn.LayerNorm(rho_hidden_dims[0]),
@@ -870,9 +979,7 @@ class HaloMassSetNetwork(nn.Module):
                     nn.Linear(in_d2, out_d2), nn.LayerNorm(out_d2), nn.GELU(), nn.Dropout(dropout),
                 ))
         self.blocks = nn.ModuleList(blocks)
-        self.output = nn.Linear(rho_hidden_dims[-1], 2)  # (mu, pre-sigmoid log_sigma), same head as HaloMassNetwork
-        with torch.no_grad():
-            self.output.bias[1] = 0.0  # same sane sigma=1 start as HaloMassNetwork, see its comment
+        self.output = _make_head(rho_hidden_dims[-1], n_components)  # same head as HaloMassNetwork
 
     def forward(self, x):
         n_flat = self.max_neighbors * self.n_feat
@@ -881,7 +988,7 @@ class HaloMassSetNetwork(nn.Module):
         # slice it back into its three original pieces by position.
         neighbor_flat = x[:, :n_flat]
         n_norm        = x[:, n_flat:n_flat + 1]
-        theta         = x[:, n_flat + 1:]
+        theta         = x[:, n_flat + 1:]  # theta, plus any n_extra scalars appended after it
         neighbors = neighbor_flat.view(-1, self.max_neighbors, self.n_feat)
 
         # A padding row is one env_to_array left all-zero (every real row
@@ -911,24 +1018,78 @@ class HaloMassSetNetwork(nn.Module):
         for block in self.blocks:
             h = block(h)
         out = self.output(h)
+        if self.n_components > 1:
+            return _split_head(out, self.n_components)
         mu = out[:, 0]
         log_sigma = -3.0 + 6.0 * torch.sigmoid(out[:, 1])  # same smooth bound as HaloMassNetwork, see its comment
         return mu, log_sigma
 
 
-def gaussian_nll(mu, log_sigma, target, weight, beta=0.0):
-    # Negative log-likelihood of `target` under a Normal(mu, sigma^2), per
-    # example, then combined into one WEIGHTED MEAN loss across the batch.
-    # The Normal log-density is
+def load_halo_mass_model(model_dir: Path, checkpoint: str = "halo_mass_best.pt"):
+    """Rebuild a trained model from model_config.npz + normalization.npz and
+    load its weights -- the ONE loading path shared by the evaluation/
+    diagnostic scripts, so a new config field (use_bright_muv, n_components)
+    only has to be handled here. Fields absent from older checkpoints fall
+    back to the behaviour those checkpoints were trained with (mlp, single
+    Gaussian, no bright-galaxy M_UV). Returns (model in eval mode, cfg dict).
+    """
+    config = np.load(model_dir / "model_config.npz")
+    norm_  = np.load(model_dir / "normalization.npz")
+    cfg = dict(
+        only_angular   = bool(int(config['only_angular'])),
+        summary_mode   = bool(int(config['summary_mode'])) if 'summary_mode' in config else False,
+        architecture   = str(config['architecture']) if 'architecture' in config else "mlp",
+        use_bright_muv = bool(int(config['use_bright_muv'])) if 'use_bright_muv' in config else False,
+        n_components   = int(config['n_components']) if 'n_components' in config else 1,
+        param_min      = norm_['param_min'],
+        param_max      = norm_['param_max'],
+    )
+    hidden_dims = list(config['hidden_dims'])
+    dropout     = float(config['dropout'])
+    if cfg['architecture'] == "deepset":
+        model = HaloMassSetNetwork(int(config['max_neighbors']),
+                                    _n_features(cfg['only_angular'], cfg['summary_mode']),
+                                    list(config['phi_dims']), hidden_dims, dropout,
+                                    pooling=str(config['pooling']),
+                                    n_extra=int(cfg['use_bright_muv']),
+                                    n_components=cfg['n_components'])
+    else:
+        model = HaloMassNetwork(int(config['input_dim']), hidden_dims, dropout,
+                                n_components=cfg['n_components'])
+    model.load_state_dict(torch.load(model_dir / checkpoint, map_location="cpu"))
+    model.eval()
+    return model, cfg
+
+
+def build_input(env, params, bright_muv, cfg) -> torch.Tensor:
+    """One environment -> the (1, input_dim) network input, laid out exactly
+    as HaloMassDataset.__getitem__ builds it (minus the training-only random
+    shift augmentation). bright_muv is ignored unless cfg['use_bright_muv']."""
+    flat, n_norm, _, _ = env_to_array(env, summary_mode=cfg['summary_mode'],
+                                       only_angular=cfg['only_angular'])
+    parts = [flat, n_norm, normalize_params(params, cfg['param_min'], cfg['param_max'])]
+    if cfg['use_bright_muv']:
+        parts.append(np.array([bright_muv - BRIGHT_MUV_REF]))
+    return torch.from_numpy(np.concatenate(parts).astype(np.float32)).unsqueeze(0)
+
+
+def mixture_nll(logit_pi, mu, log_sigma, target, weight, beta=0.0):
+    # Negative log-likelihood of `target` under a K-component Gaussian
+    # mixture sum_k pi_k N(mu_k, sigma_k^2) (all inputs (batch, K); K = 1 is
+    # the original single-Gaussian loss, exactly -- log_softmax of a single
+    # logit is 0), per example, then combined into one WEIGHTED MEAN loss
+    # across the batch. Each component's Normal log-density is
     #     log N(target; mu, sigma^2)
     #       = -log(sigma) - 0.5*log(2*pi) - 0.5*((target-mu)/sigma)^2
-    # so the per-example NEGATIVE log-likelihood (what we want to MINIMIZE)
-    # is the sign-flip of that: +log(sigma) + 0.5*log(2*pi) + 0.5*(...)^2.
-    # Since the network outputs log_sigma directly (not sigma), log(sigma)
-    # IS log_sigma, so no extra log() call is needed for that term -- only
-    # the quadratic term needs sigma = exp(log_sigma) explicitly.
-    sigma = torch.exp(log_sigma)
-    nll = log_sigma + 0.5 * math.log(2 * math.pi) + 0.5 * ((target - mu) / sigma) ** 2
+    # and the mixture log-density is computed in log space with logsumexp,
+    #     log p = logsumexp_k [ log pi_k + log N(target; mu_k, sigma_k^2) ],
+    # which never underflows even when every component's density is tiny
+    # (the standard numerically-stable MDN formulation; Bishop 1994).
+    # log pi_k = log_softmax(logit_pi), so the weights are positive and sum
+    # to 1 by construction.
+    log_comp = (-log_sigma - 0.5 * math.log(2 * math.pi)
+                - 0.5 * ((target[:, None] - mu) / torch.exp(log_sigma)) ** 2)
+    nll = -torch.logsumexp(torch.log_softmax(logit_pi, dim=-1) + log_comp, dim=-1)
 
     if beta > 0:
         # beta-NLL (Seitzer, Tavakoli, Kirchhof & Archambeau 2022, "On the
@@ -962,7 +1123,15 @@ def gaussian_nll(mu, log_sigma, target, weight, beta=0.0):
         # expression above, just scaled by this same frozen per-example
         # factor -- beta-NLL does not stop sigma from learning, only
         # decouples how hard IT'S PULLED from mu's learning signal.
-        nll = nll * (sigma.detach() ** (2 * beta))
+        #
+        # For a mixture (K > 1) there is no single sigma; the factor uses the
+        # mixture's TOTAL standard deviation (law of total variance, see
+        # mixture_mean_std), detached as before. This is our own heuristic
+        # extension -- Seitzer et al. only treat the single-Gaussian case --
+        # chosen because it reduces to their formula exactly at K = 1 and
+        # still damps the same "inflate the spread, starve the means" loop.
+        _, total_sigma = mixture_mean_std(logit_pi, mu, log_sigma)
+        nll = nll * (total_sigma.detach() ** (2 * beta))
 
     # Weighted average (not weighted sum): dividing by weight.sum() instead
     # of by batch size keeps the loss on the same natural scale as an
@@ -992,8 +1161,7 @@ def train_epoch(model, loader, optimizer, device, grad_clip=5.0, beta=0.0):
         # across multiple batches, not used here), so this must be called
         # every batch or gradients would silently keep adding up.
         optimizer.zero_grad()
-        mu, log_sigma = model(x)
-        loss = gaussian_nll(mu, log_sigma, target, weight, beta=beta)
+        loss = mixture_nll(*mixture_outputs(model, x), target, weight, beta=beta)
         # Backpropagation: populates every parameter's .grad with
         # d(loss)/d(parameter), via autograd walking the computation graph
         # built while computing `loss` above.
@@ -1022,7 +1190,6 @@ def val_epoch(model, loader, device):
         # .backward() will ever be called on these losses.
         for x, target, weight in loader:
             x, target, weight = x.to(device), target.to(device), weight.to(device)
-            mu, log_sigma = model(x)
             # Deliberately NOT passing beta here (defaults to 0.0, plain
             # NLL): beta-NLL reshapes the TRAINING objective to fix an
             # optimization pathology, but val_loss should stay the honest,
@@ -1030,7 +1197,7 @@ def val_epoch(model, loader, device):
             # would mean something different for every --beta-nll value,
             # and best-checkpoint selection across runs wouldn't be
             # comparable.
-            total += gaussian_nll(mu, log_sigma, target, weight).item()
+            total += mixture_nll(*mixture_outputs(model, x), target, weight).item()
     return total / len(loader)
 
 
@@ -1046,10 +1213,12 @@ def log_per_bin_metrics(model, loader, device, n_bins=6):
             # it's only ever compared against mu/sigmas after both are
             # pulled back to CPU numpy arrays below, so there's no need.
             x = x.to(device)
-            mu, log_sigma = model(x)
+            # Predictive mean/std of the (possibly mixture) output; for
+            # K = 1 these are exactly mu and sigma.
+            mu, sigma = mixture_mean_std(*mixture_outputs(model, x))
             targets.append(target.numpy())
             mus.append(mu.cpu().numpy())
-            sigmas.append(torch.exp(log_sigma).cpu().numpy())
+            sigmas.append(sigma.cpu().numpy())
     # Concatenate the per-batch lists into single flat arrays covering the
     # WHOLE loader (typically the validation set) at once.
     targets = np.concatenate(targets)
@@ -1191,6 +1360,12 @@ def parse_args():
                         "before real convergence -- v5/v6 both show this spike persisting past "
                         "epoch 40-50; without a warmup, patience can exhaust DURING the spike and "
                         "save the worst checkpoint in the run (see the long comment in main()).")
+    p.add_argument("--use-bright-muv", action="store_true",
+                   help="Append the bright galaxy's OWN M_UV (minus BRIGHT_MUV_REF) as an extra "
+                        "input. Requires bright_muv in the database files (patch_bright_logmh.py).")
+    p.add_argument("--n-components", type=int, default=1,
+                   help="Gaussian-mixture components in the output head (1 = original single "
+                        "Gaussian). >1 lets the predicted p(log Mh | env, theta) be skewed/heavy-tailed.")
     p.add_argument("--seed", type=int, default=42)
     return p.parse_args()
 
@@ -1260,6 +1435,7 @@ def main():
         uvlf_reweight=args.uvlf_reweight,
         uvlf_sigma_scale=args.uvlf_sigma_scale,
         max_weight_ratio=args.max_weight_ratio,
+        use_bright_muv=args.use_bright_muv,
     )
 
     # Split the single HaloMassDataset instance into disjoint train/val
@@ -1292,12 +1468,18 @@ def main():
     if args.architecture == "deepset":
         n_feat = _n_features(args.only_angular, args.summary_mode)
         model = HaloMassSetNetwork(MAX_NEIGHBORS, n_feat, args.phi_dims, args.hidden_dims,
-                                    args.dropout, pooling=args.pooling).to(device)
+                                    args.dropout, pooling=args.pooling,
+                                    n_extra=int(args.use_bright_muv),
+                                    n_components=args.n_components).to(device)
         log.info(f"Architecture: deepset  (n_feat={n_feat}, phi_dims={args.phi_dims}, "
                   f"pooling={args.pooling})")
     else:
-        model = HaloMassNetwork(input_dim, args.hidden_dims, args.dropout).to(device)
+        model = HaloMassNetwork(input_dim, args.hidden_dims, args.dropout,
+                                n_components=args.n_components).to(device)
         log.info("Architecture: mlp")
+    log.info(f"Output head: {args.n_components}-component Gaussian "
+              f"{'mixture' if args.n_components > 1 else '(single)'}; "
+              f"bright-galaxy M_UV input: {args.use_bright_muv}")
     n_params = sum(p.numel() for p in model.parameters())
     log.info(f"Model parameters: {n_params:,}")
 
@@ -1404,7 +1586,9 @@ def main():
              architecture=args.architecture,
              phi_dims=np.array(args.phi_dims),
              pooling=args.pooling,
-             max_neighbors=MAX_NEIGHBORS)
+             max_neighbors=MAX_NEIGHBORS,
+             use_bright_muv=int(args.use_bright_muv),
+             n_components=args.n_components)
     np.savez(args.output_dir / "normalization.npz", param_min=param_min, param_max=param_max)
     log.info(f"Training {'stopped early' if stopped_early else 'complete'}. Best val loss: {best_val:.4f}")
     log.info(f"Model saved to: {args.output_dir}")
