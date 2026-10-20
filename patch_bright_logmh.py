@@ -93,10 +93,29 @@ def main():
             n_missing_out += 1
             continue
 
+        # Cheap checks FIRST: listing an .npz's members and testing whether the
+        # Stage-1 catalog exists cost nothing, whereas loading the existing
+        # arrays decompresses the full coords array (the slow part). A wrong
+        # --catalog-dir once cost hours of decompression before every file
+        # was skipped anyway (2026-10-16).
         with np.load(out_path) as d:
             if "bright_logmh" in d.files and "bright_muv" in d.files:
                 n_already_done += 1
                 continue
+
+        cat_path = args.catalog_dir / make_catalog_name(Muv_add, sigmaUV_a, sigmaUV_b)
+        if not cat_path.exists():
+            log.warning(f"  [{i}] Stage-1 catalog not found: {cat_path}, skipping.")
+            n_missing_cat += 1
+            # Fail fast: if not ONE of the first files needing a patch has its
+            # catalog, --catalog-dir is almost certainly wrong (or purged).
+            if n_missing_cat >= 20 and n_patched == 0 and n_length_fail == 0:
+                log.error(f"First {n_missing_cat} Stage-1 catalogs all missing from "
+                           f"{args.catalog_dir} -- check --catalog-dir. Aborting.")
+                return
+            continue
+
+        with np.load(out_path) as d:
             # Keep EVERY existing array (not just the ones named below), so
             # re-saving never drops a field some other script added.
             existing = {k: d[k] for k in d.files}
@@ -109,12 +128,6 @@ def main():
                        f"param-file row {[Muv_add, sigmaUV_a, sigmaUV_b]} -- row-order "
                        f"mismatch, skipping this file.")
             n_mismatch += 1
-            continue
-
-        cat_path = args.catalog_dir / make_catalog_name(Muv_add, sigmaUV_a, sigmaUV_b)
-        if not cat_path.exists():
-            log.warning(f"  [{i}] Stage-1 catalog not found: {cat_path.name}, skipping.")
-            n_missing_cat += 1
             continue
 
         # --- reproduce process_one's bright-galaxy selection exactly, no neighbor search ---
@@ -164,7 +177,11 @@ def main():
         if (i + 1) % 200 == 0:
             log.info(f"  [{i+1}/{len(params)}] patched so far: {n_patched}")
 
-    log.info(f"Done. patched={n_patched}  already_done={n_already_done}  "
+    # A dry run counts files it WOULD patch under the same name -- say so
+    # loudly, since the summary is otherwise indistinguishable from a real run.
+    if args.dry_run:
+        log.warning("DRY RUN -- nothing was written; 'patched' below = files that WOULD be patched.")
+    log.info(f"Done{' (DRY RUN)' if args.dry_run else ''}. patched={n_patched}  already_done={n_already_done}  "
              f"missing_output_file={n_missing_out}  missing_stage1_catalog={n_missing_cat}  "
              f"param_mismatch={n_mismatch}  length_mismatch={n_length_fail}")
     if n_length_fail > 0:
