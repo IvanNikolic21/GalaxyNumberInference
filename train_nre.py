@@ -64,7 +64,7 @@ def normalize_params(params, param_min, param_max):
     return (2 * (params - param_min) / (param_max - param_min) - 1).astype(np.float32)
 
 
-def env_to_array(env, summary_mode=False, only_angular=False):
+def env_to_array(env, summary_mode=False, only_angular=False, max_neighbors=MAX_NEIGHBORS):
     """Sort by distance, keep 10 closest, pad, append n_neighbors.
 
     Parameters
@@ -78,6 +78,10 @@ def env_to_array(env, summary_mode=False, only_angular=False):
         If True, use projected 2D distance sqrt(dx²+dy²) instead of full 3D
         distance sqrt(dx²+dy²+dz²). Matches real observations where only
         angular separation is available.
+    max_neighbors : int
+        Number of closest neighbors kept (default MAX_NEIGHBORS = 10, what the
+        NRE models use). The halo-mass Deep Sets model can take more
+        (train_halo_mass.py --max-neighbors).
     """
     if only_angular:
         dists = np.sqrt(env[:, 0]**2 + env[:, 1]**2)
@@ -87,25 +91,25 @@ def env_to_array(env, summary_mode=False, only_angular=False):
     env   = env[order]
     dists = dists[order]
     n_total = len(env)
-    n       = min(n_total, MAX_NEIGHBORS)
+    n       = min(n_total, max_neighbors)
 
     if summary_mode:
         # (distance, MUV) only — 2 features, translation invariant by construction
         n_feat  = N_FEATURES_SUMM
-        padded  = np.zeros((MAX_NEIGHBORS, n_feat), dtype=np.float32)
+        padded  = np.zeros((max_neighbors, n_feat), dtype=np.float32)
         padded[:n, 0] = dists[:n]          # distance (2D if only_angular, else 3D)
         padded[:n, 1] = env[:n, 3]         # MUV
     elif only_angular:
         # (dx, dy, MUV) — 3 features, dz dropped
         n_feat  = N_FEATURES_ANG
-        padded  = np.zeros((MAX_NEIGHBORS, n_feat), dtype=np.float32)
+        padded  = np.zeros((max_neighbors, n_feat), dtype=np.float32)
         padded[:n, 0] = env[:n, 0]         # dx
         padded[:n, 1] = env[:n, 1]         # dy
         padded[:n, 2] = env[:n, 3]         # MUV (skip dz at index 2)
     else:
         # Full (dx, dy, dz, MUV) — 4 features
         n_feat  = N_FEATURES_FULL
-        padded  = np.zeros((MAX_NEIGHBORS, n_feat), dtype=np.float32)
+        padded  = np.zeros((max_neighbors, n_feat), dtype=np.float32)
         padded[:n] = env[:n]
 
     n_norm = np.array([n_total / 200.0], dtype=np.float32)

@@ -272,7 +272,7 @@ class HaloMassDataset(Dataset):
         database_dirs: list,
         param_min: np.ndarray,
         param_max: np.ndarray,
-        augment: bool = True,
+        augment: bool = False,
         max_per_catalog: int = 200,
         summary_mode: bool = False,
         only_angular: bool = False,
@@ -285,6 +285,7 @@ class HaloMassDataset(Dataset):
         uvlf_reweight: bool = False,
         uvlf_sigma_scale: float = 5.0,
         use_bright_muv: bool = False,
+        max_neighbors: int = MAX_NEIGHBORS,
     ):
         # Theta normalization bounds (computed once, in main(), across ALL
         # loaded database files, and passed in here) -- stored so
@@ -309,6 +310,8 @@ class HaloMassDataset(Dataset):
         # BRIGHT_MUV_REF) as one extra scalar input after theta -- see
         # --use-bright-muv and patch_bright_logmh.py's docstring for why.
         self.use_bright_muv = use_bright_muv
+        # How many closest neighbors env_to_array keeps (--max-neighbors).
+        self.max_neighbors = max_neighbors
 
         # Parallel lists (not yet batched into a single array), one entry
         # per (environment, log Mh) training example:
@@ -696,38 +699,40 @@ class HaloMassDataset(Dataset):
         env    = self.envs[idx]
         params = self.params[idx]
 
-        # Sort-by-distance + zero-pad-to-MAX_NEIGHBORS + flatten, exactly as
-        # train_nre.py's NRE models consume their environments; n is the
-        # TRUE (pre-padding) neighbor count, dists are the (already sorted)
-        # per-neighbor distances -- both only used below for augmentation,
-        # not returned from this function.
-        flat, n_norm, n, dists = env_to_array(env, summary_mode=self.summary_mode,
-                                               only_angular=self.only_angular)
+        if self.augment:
+            # Symmetry augmentation (--augment): a random rotation about the
+            # line of sight plus random reflections of y and of the line-of-
+            # sight axis. The halo field is statistically isotropic and these
+            # halo positions are in real space (no redshift-space
+            # distortions), so the rotated/reflected environment is an
+            # equally likely environment for the same halo -- the label is
+            # preserved. Distances are unchanged, so env_to_array's
+            # distance-sorting picks the same neighbors.
+            #
+            # This REPLACES an older "random rigid translation" augmentation
+            # (2026-10-22), which added the same random +/-5 cMpc shift to
+            # every neighbor's offset. Those offsets are relative to the
+            # bright galaxy, so the shift effectively displaced the bright
+            # galaxy within its own environment -- destroying the very
+            # information the network is meant to read, NOT a label-
+            # preserving transformation. It was only ever active without
+            # --only-angular, so no v1-v11 run was affected.
+            env = env.copy()
+            phi = np.random.uniform(0.0, 2.0 * np.pi)
+            c, s_ = np.cos(phi), np.sin(phi)
+            x, y = env[:, 0].copy(), env[:, 1].copy()
+            env[:, 0] = c * x - s_ * y
+            env[:, 1] = s_ * x + c * y
+            if np.random.rand() < 0.5:
+                env[:, 1] = -env[:, 1]
+            if np.random.rand() < 0.5:
+                env[:, 2] = -env[:, 2]
 
-        if self.augment and n > 0 and not self.summary_mode and not self.only_angular:
-            # Random rigid translation augmentation: shift every real
-            # (non-padding) neighbor's (dx, dy, dz) by the SAME random
-            # offset, uniform in [-5, +5] (comoving Mpc, matching the
-            # coordinate units coords/env are stored in). This is valid
-            # because the network's input is purely RELATIVE neighbor
-            # positions around the bright galaxy -- translating the whole
-            # environment rigidly doesn't change which galaxy is "bright" or
-            # its true halo mass, so it's a label-preserving augmentation
-            # that teaches the network not to overfit to absolute position
-            # within whatever coordinate frame the simulation box happens to
-            # use. Only applied in the full (dx,dy,dz,MUV) encoding -- in
-            # summary_mode (distance-only) or only_angular (2D, no dz) modes
-            # this particular augmentation isn't well-defined / would need a
-            # different implementation, so it's skipped there.
-            shift = np.random.uniform(-5.0, 5.0, size=3).astype(np.float32)
-            # flat is a 1D (MAX_NEIGHBORS*N_FEATURES_FULL,) array; reshape
-            # back to the 2D (MAX_NEIGHBORS, N_FEATURES_FULL) layout so the
-            # shift can be added to just the first 3 (spatial) columns of
-            # just the first n (real, non-padding) rows, leaving the MUV
-            # column and all padding rows untouched.
-            flat_2d = flat.reshape(MAX_NEIGHBORS, N_FEATURES_FULL)
-            flat_2d[:n, :3] += shift
-            flat = flat_2d.flatten()
+        # Sort-by-distance + zero-pad-to-max_neighbors + flatten, exactly as
+        # train_nre.py's NRE models consume their environments.
+        flat, n_norm, n, dists = env_to_array(env, summary_mode=self.summary_mode,
+                                               only_angular=self.only_angular,
+                                               max_neighbors=self.max_neighbors)
 
         # Final network input: flattened neighbor features, the true
         # neighbor-count feature (n_norm, already /200-normalized inside
@@ -1041,6 +1046,7 @@ def load_halo_mass_model(model_dir: Path, checkpoint: str = "halo_mass_best.pt")
         architecture   = str(config['architecture']) if 'architecture' in config else "mlp",
         use_bright_muv = bool(int(config['use_bright_muv'])) if 'use_bright_muv' in config else False,
         n_components   = int(config['n_components']) if 'n_components' in config else 1,
+        max_neighbors  = int(config['max_neighbors']) if 'max_neighbors' in config else MAX_NEIGHBORS,
         param_min      = norm_['param_min'],
         param_max      = norm_['param_max'],
     )
@@ -1063,10 +1069,11 @@ def load_halo_mass_model(model_dir: Path, checkpoint: str = "halo_mass_best.pt")
 
 def build_input(env, params, bright_muv, cfg) -> torch.Tensor:
     """One environment -> the (1, input_dim) network input, laid out exactly
-    as HaloMassDataset.__getitem__ builds it (minus the training-only random
-    shift augmentation). bright_muv is ignored unless cfg['use_bright_muv']."""
+    as HaloMassDataset.__getitem__ builds it (without --augment's random
+    rotation/reflection). bright_muv is ignored unless cfg['use_bright_muv']."""
     flat, n_norm, _, _ = env_to_array(env, summary_mode=cfg['summary_mode'],
-                                       only_angular=cfg['only_angular'])
+                                       only_angular=cfg['only_angular'],
+                                       max_neighbors=cfg['max_neighbors'])
     parts = [flat, n_norm, normalize_params(params, cfg['param_min'], cfg['param_max'])]
     if cfg['use_bright_muv']:
         parts.append(np.array([bright_muv - BRIGHT_MUV_REF]))
@@ -1363,6 +1370,13 @@ def parse_args():
     p.add_argument("--use-bright-muv", action="store_true",
                    help="Append the bright galaxy's OWN M_UV (minus BRIGHT_MUV_REF) as an extra "
                         "input. Requires bright_muv in the database files (patch_bright_logmh.py).")
+    p.add_argument("--max-neighbors", type=int, default=MAX_NEIGHBORS,
+                   help="Closest neighbors fed to the network (default 10, as for the NRE). "
+                        "Up to the 200 stored per environment; intended for --architecture "
+                        "deepset, whose masked pooling handles any number.")
+    p.add_argument("--augment", action="store_true",
+                   help="Random rotation about the line of sight + reflections of each "
+                        "environment (label-preserving symmetries), applied per fetch.")
     p.add_argument("--n-components", type=int, default=1,
                    help="Gaussian-mixture components in the output head (1 = original single "
                         "Gaussian). >1 lets the predicted p(log Mh | env, theta) be skewed/heavy-tailed.")
@@ -1436,6 +1450,8 @@ def main():
         uvlf_sigma_scale=args.uvlf_sigma_scale,
         max_weight_ratio=args.max_weight_ratio,
         use_bright_muv=args.use_bright_muv,
+        max_neighbors=args.max_neighbors,
+        augment=args.augment,
     )
 
     # Split the single HaloMassDataset instance into disjoint train/val
@@ -1467,7 +1483,7 @@ def main():
 
     if args.architecture == "deepset":
         n_feat = _n_features(args.only_angular, args.summary_mode)
-        model = HaloMassSetNetwork(MAX_NEIGHBORS, n_feat, args.phi_dims, args.hidden_dims,
+        model = HaloMassSetNetwork(args.max_neighbors, n_feat, args.phi_dims, args.hidden_dims,
                                     args.dropout, pooling=args.pooling,
                                     n_extra=int(args.use_bright_muv),
                                     n_components=args.n_components).to(device)
@@ -1586,7 +1602,7 @@ def main():
              architecture=args.architecture,
              phi_dims=np.array(args.phi_dims),
              pooling=args.pooling,
-             max_neighbors=MAX_NEIGHBORS,
+             max_neighbors=args.max_neighbors,
              use_bright_muv=int(args.use_bright_muv),
              n_components=args.n_components)
     np.savez(args.output_dir / "normalization.npz", param_min=param_min, param_max=param_max)

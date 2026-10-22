@@ -180,6 +180,17 @@ def process_one(
     bright_mask = muvs < BRIGHT_LIMIT
     faint_mask  = (muvs < FAINT_LIMIT) & (muvs >= BRIGHT_LIMIT)
 
+    # Completeness check for --faint-limit: if halos at the catalog's mass
+    # resolution floor can already be brighter than FAINT_LIMIT, then halos
+    # just BELOW the floor (absent from the catalog) would be too, and the
+    # neighbor sample is incomplete at this depth for this theta.
+    floor_mask = _halo_logmhs < _halo_logmhs.min() + 0.1
+    frac_floor = float(np.mean(muvs[floor_mask] < FAINT_LIMIT))
+    if frac_floor > 0:
+        log.warning(f"  [{i+1}/{n_total}] {frac_floor:.2%} of halos within 0.1 dex of the catalog's "
+                    f"mass floor are brighter than FAINT_LIMIT={FAINT_LIMIT} -- the faint-neighbor "
+                    f"sample is INCOMPLETE at this depth for this theta.")
+
     bright_coords_sel = _halo_coords[bright_mask]
     bright_logmhs_sel = _halo_logmhs[bright_mask]
     bright_muvs_sel   = muvs[bright_mask]   # the bright galaxy's own M_UV (halo-mass network input)
@@ -332,6 +343,20 @@ def parse_args():
     p.add_argument("--seed", type=int, default=42,
                    help="RNG seed for environment subsampling (combined with each "
                         "catalog's index for a distinct, reproducible draw per catalog).")
+    p.add_argument("--faint-limit", type=float, default=FAINT_LIMIT,
+                   help="Faintest M_UV stored as a neighbor (survey depth). Deeper than the "
+                        "default is a depth forecast; watch for the per-catalog completeness "
+                        "warning against the halo catalog's mass floor.")
+    p.add_argument("--max-env-neighbors", type=int, default=MAX_ENV_NEIGHBORS,
+                   help="Cap on stored neighbors per environment (closest in projection). "
+                        "Raise it together with a deeper --faint-limit, or the cap hides the "
+                        "extra neighbors.")
+    p.add_argument("--max-uvlf-sigma", type=float, default=None,
+                   help="Only process theta rows consistent with the Donnan+24 UVLF to within "
+                        "this equivalent Gaussian sigma (same conversion as the halo-mass "
+                        "diagnostics). Rows keep their ORIGINAL index i, so the per-row seed "
+                        "(seed+i) -- and hence the selected bright galaxies -- are identical to "
+                        "a full build with the same --param-file/--seed.")
     p.add_argument("--halo-catalog-path", type=Path, default=DEFAULT_HALO_CATALOG_PATH,
                    help="Halo catalog to search for neighbors in -- override to point at one "
                         "of the independent coeval boxes instead of the original single box.")
@@ -346,10 +371,13 @@ def parse_args():
 # ---------------------------------------------------------------------------
 
 def main():
-    global _halo_coords, _halo_tree_2d, _halo_logmhs, CATALOG_DIR
+    global _halo_coords, _halo_tree_2d, _halo_logmhs, CATALOG_DIR, FAINT_LIMIT, MAX_ENV_NEIGHBORS
 
     args = parse_args()
     CATALOG_DIR = args.catalog_dir  # reassigned before Pool creation, see comment above
+    FAINT_LIMIT = args.faint_limit              # same pattern: forked workers read the globals
+    MAX_ENV_NEIGHBORS = args.max_env_neighbors
+    log.info(f"Faint limit: {FAINT_LIMIT}   max stored neighbors: {MAX_ENV_NEIGHBORS}")
 
     # Compute photo-z comoving bounds and auto-suffix output dir
     dz_lower = dz_upper = None
@@ -402,6 +430,12 @@ def main():
     )
 
     items = list(enumerate(zip(Muv_adds, sigmaUV_as, sigmaUV_bs)))
+    if args.max_uvlf_sigma is not None:
+        from uvlf_consistency import uvlf_sigma_per_theta
+        sig = uvlf_sigma_per_theta(params[:, :3])
+        # Filter AFTER enumerate, so each kept row keeps its original index.
+        items = [it for it, sg in zip(items, sig) if sg <= args.max_uvlf_sigma]
+        log.info(f"UVLF cut <= {args.max_uvlf_sigma} sigma: {len(items)}/{len(params)} rows kept")
 
     if args.n_workers == 1:
         for item in items:

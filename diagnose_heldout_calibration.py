@@ -88,7 +88,6 @@ import logging
 from pathlib import Path
 
 import numpy as np
-from scipy.stats import chi2, norm
 import torch
 from torch.utils.data import DataLoader, Subset
 import matplotlib
@@ -97,7 +96,7 @@ import matplotlib.pyplot as plt
 
 from train_halo_mass import (HaloMassDataset, load_halo_mass_model, mixture_outputs,
                              mixture_mean_std, mixture_cdf)
-from uvlf import Mason15, Observations
+from uvlf_consistency import uvlf_sigma_per_theta
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s",
                     datefmt="%H:%M:%S")
@@ -135,34 +134,6 @@ def parse_args():
     p.add_argument("--n-bins", type=int, default=12, help="Bins in predicted mu for the reverse-binning panel.")
     p.add_argument("--batch-size", type=int, default=4096)
     return p.parse_args()
-
-
-def uvlf_sigma_per_theta(params: np.ndarray) -> np.ndarray:
-    """Equivalent Gaussian sigma of each theta's UVLF fit to Donnan+24.
-
-    Identical chi2 -> p -> sigma conversion as plot_eval_vs_truth_uvlf_consistent.py
-    and HaloMassDataset's --uvlf-reweight block (see the former's docstring
-    for why the /2 is needed); cached per distinct theta, since every
-    environment of one database file shares that file's theta.
-    """
-    mason15 = Mason15(z=10.0)
-    obs = Observations(ang=False, uvlf=True)
-    muv_obs, phi_obs, (sig_p, sig_m) = obs.get_obs_uvlf_z10_Donnan24()
-    muv_grid = np.linspace(-25, -13, 100)
-    dof = len(muv_obs)
-    cache = {}
-    out = np.empty(len(params))
-    for k, (muv_add, sa, sb) in enumerate(params):
-        key = (round(float(muv_add), 8), round(float(sa), 8), round(float(sb), 8))
-        if key not in cache:
-            phi_pred = np.interp(muv_obs, muv_grid,
-                                 mason15.calculate_UVLF(muv_add, sa, sb, Muv_grid=muv_grid))
-            sigma_obs = np.where(phi_pred >= phi_obs, sig_p, sig_m)
-            chi2_val = np.sum(((phi_obs - phi_pred) / sigma_obs) ** 2)
-            pval = np.clip(chi2.sf(chi2_val, df=dof) / 2.0, 0.0, 1.0 - 1e-16)
-            cache[key] = max(0.0, float(norm.isf(pval)))
-        out[k] = cache[key]
-    return out
 
 
 def weighted_mean_se(x, w):
@@ -287,6 +258,7 @@ def main():
         max_per_catalog=args.max_per_catalog,
         summary_mode=cfg['summary_mode'], only_angular=cfg['only_angular'],
         use_bright_muv=cfg['use_bright_muv'],
+        max_neighbors=cfg['max_neighbors'],
         weight_by_catalog_count=args.weight_by_catalog_count,
         reweight_by_mass=args.reweight_by_mass,
         reweight_alpha=args.reweight_alpha,
