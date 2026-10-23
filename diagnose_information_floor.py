@@ -93,8 +93,6 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 
-from uvlf_consistency import uvlf_sigma_per_theta
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(levelname)-8s  %(message)s",
                     datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
@@ -169,6 +167,9 @@ def load(args):
                 continue
             files.append(path)
             box_of_file.append(b)
+    # Imported here, not at module level, so plot_information_floor_comparison.py
+    # can reuse this module's regression helpers without the uvlf/hmf stack.
+    from uvlf_consistency import uvlf_sigma_per_theta
     sig = uvlf_sigma_per_theta(np.array(thetas))
     keep = sig <= args.max_sigma
     log.info(f"{keep.sum()}/{len(files)} files pass UVLF <= {args.max_sigma} sigma")
