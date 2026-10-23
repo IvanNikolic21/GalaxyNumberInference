@@ -33,7 +33,12 @@
 FAINT_LIMIT=${1:--18.5}
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
-conda activate UVLF_clust
+# galaxy-neighbors, NOT UVLF_clust: the UVLF cut (uvlf_consistency.py) depends on
+# hmf, and UVLF_clust's hmf 3.6.1 (+ astropy 5.3.4) returns a z=10 growth factor
+# 4% low (0.1105 vs 0.1151; analytic Planck18 ~0.115) -> dn/dm x1.6-2.4 low and
+# UVLF sigma off by up to ~7 for the same theta (2026-10-23, compare_hmf_envs.py).
+# galaxy-neighbors (hmf 3.5.2) matches the analytic value and the training runs.
+conda activate galaxy-neighbors
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export OPENBLAS_NUM_THREADS=$SLURM_CPUS_PER_TASK
